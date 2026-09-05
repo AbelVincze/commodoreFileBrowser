@@ -448,5 +448,174 @@ do {
     print("  FAIL basic: \(error)"); failures += 1
 }
 
+// --- SID tune detection -----------------------------------------------------
+print("\n=== sid tune detection")
+do {
+    // The naming convention, against every shape seen on the real disks.
+    let expected: [(String, Int, Int, Bool)] = [
+        ("Z10 I1000 P1003", 0x1000, 0x1003, false),   // the standard
+        ("Z8 I4000 P4003", 0x4000, 0x4003, false),
+        ("Z108 !2800 P2803", 0x2800, 0x2803, true),   // ! replaces the I
+        ("Z11 I1800 P1803!", 0x1800, 0x1803, true),   // trailing !
+        ("Z101 !E006PPE000", 0xE006, 0xE000, true),   // run together, doubled P
+        ("Z121 !41C9 P41C0", 0x41C9, 0x41C0, true),
+    ]
+    for (name, wantInit, wantPlay, wantMulti) in expected {
+        if let got = SIDTuneLoader.addressesFromName(name) {
+            check(got.init_ == wantInit && got.play == wantPlay && got.multi == wantMulti,
+                  String(format: "%-18@ -> init $%04X play $%04X%@", name as NSString,
+                         got.init_, got.play, got.multi ? " multi" : ""))
+        } else {
+            check(false, "\(name) did not parse")
+        }
+    }
+    // Things on the same disks that must NOT look like tunes.
+    for name in ["PLAYER V3.1 0800", "PLAY ALL+   /MAC", "NOTES", "Z50"] {
+        check(SIDTuneLoader.addressesFromName(name) == nil, "\(name.trimmingCharacters(in: .whitespaces)) is not a tune")
+    }
+
+    // Sweep every INTROMUSICS disk and report the real hit rate.
+    let disks = (try? FileManager.default.contentsOfDirectory(
+        atPath: "/Users/macc/Emulation/c64/SD_backup/macc/maccdisks"))?
+        .filter { $0.uppercased().hasPrefix("INTROMUSICS") && $0.uppercased().hasSuffix(".D64") }
+        .sorted() ?? []
+    var parsed = 0, multi = 0, skipped = 0
+    for disk in disks {
+        let img = try CBMDiskImage(url: URL(fileURLWithPath:
+            "/Users/macc/Emulation/c64/SD_backup/macc/maccdisks/\(disk)"))
+        for entry in img.entries where entry.type == .prg {
+            if let got = SIDTuneLoader.addressesFromName(entry.displayName) {
+                parsed += 1
+                if got.multi { multi += 1 }
+            } else { skipped += 1 }
+        }
+    }
+    check(!disks.isEmpty, "found \(disks.count) INTROMUSICS disks")
+    check(parsed > 150, "\(parsed) tunes resolved from their names (\(multi) multi-song)")
+    check(skipped > 0, "\(skipped) non-tune PRGs correctly left alone")
+
+    // A real tune off a disk loads with its address from the PRG header.
+    let img = try CBMDiskImage(url: URL(fileURLWithPath:
+        "/Users/macc/Emulation/c64/SD_backup/macc/maccdisks/INTROMUSICS_007.D64"))
+    if let entry = img.entries.first(where: { $0.displayName.hasPrefix("Z10 ") }) {
+        let bytes = [UInt8](try img.read(entry))
+        if let tune = SIDTuneLoader.detect(name: entry.displayName, data: bytes) {
+            check(tune.source == .naming, "Z10 detected from its name")
+            check(tune.initAddress == 0x1000 && tune.playAddress == 0x1003, "init/play $1000/$1003")
+            check(tune.loadAddress == 0x1000, String(format: "loads at $%04X", tune.loadAddress))
+            check(tune.payload.count == bytes.count - 2, "payload drops the load address")
+        } else { check(false, "Z10 did not detect") }
+    }
+
+    // PSID, from the user's own collection.
+    let sids = (try? FileManager.default.contentsOfDirectory(
+        atPath: "/Users/macc/Music/C64music/MUSICIANS/P/PCH"))?
+        .filter { $0.lowercased().hasSuffix(".sid") }.sorted() ?? []
+    if let first = sids.first {
+        let bytes = [UInt8](try Data(contentsOf: URL(fileURLWithPath:
+            "/Users/macc/Music/C64music/MUSICIANS/P/PCH/\(first)")))
+        check(SIDTuneLoader.isPSID(bytes), "\(first) has a PSID header")
+        if let tune = SIDTuneLoader.psid(bytes) {
+            check(tune.source == .psid, "parsed from the header")
+            check(tune.initAddress != 0, String(format: "init $%04X, play $%04X, load $%04X",
+                                                tune.initAddress, tune.playAddress, tune.loadAddress))
+            check(tune.songCount >= 1, "\(tune.songCount) song(s), title \"\(tune.title)\"")
+            check(!tune.payload.isEmpty, "\(tune.payload.count) bytes of payload")
+        } else { check(false, "PSID did not parse") }
+    } else { print("      (no .sid files found to test)") }
+
+    // Raw: the load address comes from the first two bytes.
+    let prg: [UInt8] = [0x00, 0x20] + [UInt8](repeating: 0xEA, count: 100)
+    if let tune = SIDTuneLoader.raw(prg, name: "T", initAddress: 0x2000, playAddress: 0x2003) {
+        check(tune.loadAddress == 0x2000 && tune.payload.count == 100, "raw PRG loads at $2000")
+    }
+} catch {
+    print("  FAIL sid: \(error)"); failures += 1
+}
+
+// --- The SID engine actually runs -------------------------------------------
+print("\n=== sid engine")
+do {
+    let img = try CBMDiskImage(url: URL(fileURLWithPath:
+        "/Users/macc/Emulation/c64/SD_backup/macc/maccdisks/INTROMUSICS_007.D64"))
+    guard let entry = img.entries.first(where: { $0.displayName.hasPrefix("Z10 ") }),
+          let tune = SIDTuneLoader.detect(name: entry.displayName,
+                                          data: [UInt8](try img.read(entry)))
+    else { throw DiskImageError.fileNotFound }
+
+    func render(seconds: Int, hz: Double) -> (nonSilent: Int, peak: Int, calls: UInt) {
+        cSID_init(44100)
+        tune.payload.withUnsafeBufferPointer {
+            csid_load($0.baseAddress, Int32($0.count), UInt32(tune.loadAddress))
+        }
+        csid_set_addresses(UInt32(tune.initAddress), UInt32(tune.playAddress))
+        csid_set_sid(8580, 0, 0)
+        csid_set_speed_hz(hz)
+        csid_start(0, tune.selector)
+
+        let frames = 44100 * seconds
+        var buffer = [Int16](repeating: 0, count: frames)
+        buffer.withUnsafeMutableBufferPointer { csid_render($0.baseAddress, Int32(frames)) }
+        return (buffer.filter { $0 != 0 }.count,
+                Int(buffer.map { abs(Int($0)) }.max() ?? 0),
+                UInt(csid_play_call_count()))
+    }
+
+    // Sound, not silence and not garbage.
+    let vsync = render(seconds: 2, hz: 0)
+    check(vsync.nonSilent > 40_000, "2s render is audible: \(vsync.nonSilent)/88200 non-silent samples")
+    check(vsync.peak > 1000 && vsync.peak <= 32767, "peak amplitude \(vsync.peak) is in range")
+
+    // Timing: the tune's own rate is PAL vsync, near 50 Hz.
+    let vsyncHz = Double(vsync.calls) / 2.0
+    check(abs(vsyncHz - 50.0) < 1.5, String(format: "default timing is %.1f Hz (PAL vsync)", vsyncHz))
+
+    // An explicit rate overrides it, and scales the way it should.
+    for hz in [100.0, 200.0, 400.0] {
+        let forced = render(seconds: 1, hz: hz)
+        let measured = Double(forced.calls)
+        check(abs(measured - hz) / hz < 0.05,
+              String(format: "%.0f Hz requested -> play called %.0f times in 1s", hz, measured))
+    }
+
+    // The A/X/Y byte reaches the tune. Individual tunes may ignore it — of the
+    // 35 multi-song files on these disks, 33 respond and 2 do not — so look for
+    // the first that does rather than resting on one file.
+    func fingerprint(_ t: SIDTune, _ selector: UInt8) -> Int {
+        cSID_init(44100)
+        t.payload.withUnsafeBufferPointer {
+            csid_load($0.baseAddress, Int32($0.count), UInt32(t.loadAddress))
+        }
+        csid_set_addresses(UInt32(t.initAddress), UInt32(t.playAddress))
+        csid_set_sid(8580, 0, 0); csid_set_speed_hz(0)
+        csid_start(selector, selector)
+        var buffer = [Int16](repeating: 0, count: 44100)
+        buffer.withUnsafeMutableBufferPointer { csid_render($0.baseAddress, 44100) }
+        return buffer.reduce(0) { $0 &+ Int($1) &* Int($1) }
+    }
+
+    // Disk 007 carries only one such file and it is one of the two that ignore
+    // the selector, so look across the set.
+    let musicDir = "/Users/macc/Emulation/c64/SD_backup/macc/maccdisks"
+    var tried = 0, responder: String?
+    outer: for disk in (try FileManager.default.contentsOfDirectory(atPath: musicDir))
+        .filter({ $0.uppercased().hasPrefix("INTROMUSICS") && $0.uppercased().hasSuffix(".D64") })
+        .sorted() {
+        let d = try CBMDiskImage(url: URL(fileURLWithPath: "\(musicDir)/\(disk)"))
+        for entry in d.entries where entry.type == .prg && entry.displayName.contains("!") {
+            guard let mt = SIDTuneLoader.detect(name: entry.displayName,
+                                               data: [UInt8](try d.read(entry))) else { continue }
+            tried += 1
+            if fingerprint(mt, 0) != fingerprint(mt, 1) { responder = entry.displayName; break outer }
+            if tried >= 12 { break outer }
+        }
+    }
+    check(responder != nil,
+          "the selector changes the tune: \(responder ?? "none") (tried \(tried))")
+
+} catch {
+    print("  FAIL sid engine: \(error)"); failures += 1
+}
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) CHECK(S) FAILED")
 exit(failures == 0 ? 0 : 1)

@@ -35,6 +35,7 @@ enum AppSheet: Identifiable {
     case diskHeader
     case viewer(ViewerContent)
     case addDecoration
+    case player(SIDRequest)
     case discardChanges
     case help
 
@@ -48,6 +49,7 @@ enum AppSheet: Identifiable {
         case .diskHeader: return "header"
         case .viewer(let v): return "viewer-\(v.id)"
         case .addDecoration: return "decorate"
+        case .player(let r): return "player-\(r.id)"
         case .discardChanges: return "discard"
         case .help: return "help"
         }
@@ -59,6 +61,7 @@ final class AppModel: ObservableObject {
     let left = PanelModel(side: .left)
     let right = PanelModel(side: .right)
     let settings: SettingsStore
+    let player = SIDPlayer()
 
     @Published var activeSide: PanelSide = .left
     @Published var sheet: AppSheet?
@@ -143,7 +146,8 @@ final class AppModel: ObservableObject {
         case 119: activePanel.moveCursor(to: Int.max)                    // end
         case 48:  activeSide = activeSide == .left ? .right : .left      // tab
         case 49:  activePanel.toggleMark()                               // space
-        case 36, 76: activePanel.open()                                  // return / enter
+        case 36, 76:                                                     // return / enter
+            if shift { beginPlay(manual: true) } else { activateItem() }
         case 51, 123: activePanel.goUp()                                 // backspace / left
         case 124: activePanel.open(allowParent: false)                   // right
         case 53: leaveDiscardingChanges()                                // escape
@@ -167,6 +171,28 @@ final class AppModel: ObservableObject {
             }
         }
         return true
+    }
+
+    // MARK: - Playing
+
+    /// Return enters a folder, a volume or an image, and plays anything else.
+    func activateItem() {
+        guard let item = activePanel.currentItem else { return }
+        if item.kind.isNavigable { activePanel.open() } else { beginPlay(manual: false) }
+    }
+
+    /// `manual` skips detection, for a raw binary or when a guess is wrong.
+    func beginPlay(manual: Bool) {
+        guard let item = activePanel.currentItem, item.isSelectable, item.kind != .folder else { return }
+        do {
+            let payload = try read(item, from: activePanel)
+            let bytes = [UInt8](payload.data)
+            guard bytes.count > 2 else { alertMessage = "That file is too short to be a tune."; return }
+            sheet = .player(SIDRequest(
+                name: item.title,
+                data: bytes,
+                detected: manual ? nil : SIDTuneLoader.detect(name: item.title, data: bytes)))
+        } catch { fail(error) }
     }
 
     // MARK: - Leaving an image

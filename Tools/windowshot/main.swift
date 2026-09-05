@@ -182,21 +182,22 @@ func capture() {
     print(String(format: "  difference %.1f pt", abs(topGap - bottomGap)))
 }
 
-// Capture the panels, flip the character set, and capture again. If a font
-// change does not invalidate the rows, the two shots are identical.
+// Open the SID player on a real tune and capture the sheet.
 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-    model.left.navigate(to: .directory(URL(fileURLWithPath: "/Users/macc/dev/commodoreFileBrowser")))
-    model.right.navigate(to: .image(base.appendingPathComponent("cbmcmd23.d64")))
+    let dir = "/Users/macc/Emulation/c64/SD_backup/macc/maccdisks"
+    model.left.navigate(to: .directory(URL(fileURLWithPath: dir)))
+    model.right.navigate(to: .image(URL(fileURLWithPath: "\(dir)/INTROMUSICS_007.D64")))
     model.activeSide = .right
-    settings.font = PETSCIIFont(rom: .c64, set: .uppercase)
-
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-        captureNamed("font_before")
-        settings.font.set = .lowercase
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            captureNamed("font_after")
-            exit(0)
-        }
+    if let img = model.right.image,
+       let entry = img.entries.first(where: { $0.displayName.contains("!") }),
+       let data = try? img.read(entry) {
+        let bytes = [UInt8](data)
+        model.sheet = .player(SIDRequest(name: entry.displayName, data: bytes,
+                                         detected: SIDTuneLoader.detect(name: entry.displayName, data: bytes)))
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+        captureSheet("player")
+        exit(0)
     }
 }
 

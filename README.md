@@ -46,7 +46,8 @@ because the names are never converted to ASCII for display.
 | `Tab` | switch panels |
 | `Space` | mark the file under the cursor |
 | `+` `-` `*` | mark all, unmark all, invert |
-| `Return` | enter a folder, a volume or a disk image |
+| `Return` | enter a folder or an image, or play a file as music |
+| `⇧Return` | play, entering the addresses by hand |
 | `→` | enter a folder or an image — never goes up |
 | `←` or `Delete` | go up — saving the image on the way out |
 | `⌘D` | jump to the list of volumes |
@@ -208,6 +209,34 @@ Hovering reports the byte's offset, its C64 address, its value and its pixel and
 block coordinates, and outlines the block it belongs to. *Save as PNG…* writes
 the rendered image out. Zoom and invert are remembered between files; the block
 geometry is not, since it depends on what the file is. At most 1 MB is drawn.
+
+## Playing SID music
+
+`Return` on a file opens the player. It is a sheet rather than a bar, so
+closing it stops playback.
+
+The addresses it needs are worked out three ways:
+
+* **PSID / RSID header** — load, init and play addresses, subtune count,
+  title, author and SID model all come from the header.
+* **The file name** — `Z10 I1000 P1003` gives init `$1000` and play `$1003`.
+  A `!` in place of the `I` (`Z108 !2800 P2803`), or trailing the name, marks a
+  tune with more than one song. Run-together spellings such as
+  `Z101 !E006PPE000` parse too; names like `PLAYER V3.1 0800` correctly do not.
+* **By hand** — anything else, or `⇧Return` to override a wrong guess. The file
+  is treated as a PRG, so its first two bytes give the load address.
+
+A song is chosen by the byte written to A, X and Y before init, which is what
+the `Song` stepper sets. Playback speed is 50, 100, 200 or 400 Hz, any figure
+you type, or *Tune* to keep the tune's own timing — 50 Hz vsync, or whatever
+its CIA timer asks for.
+
+The engine is [cSID-light](http://hermit.sidrip.com) by Hermit
+(Mihaly Horvath), vendored into `Audio/csid.c` with SDL and its `main()`
+removed. His CPU and SID emulation is untouched; the additions are a small API
+for the load address, the init and play routines, the A/X/Y byte and an
+explicit playback rate. Licensed "do what you want, but please mention me as
+its original author".
 
 ## Themes
 

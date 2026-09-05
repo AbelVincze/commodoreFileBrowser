@@ -70,6 +70,7 @@ struct CommodoreFileBrowserApp: App {
         CommandMenu("Commodore") {
             Button("View File…") { model.beginView() }
             Button("View as Bitmap…") { model.beginView(bitmap: true) }
+            Button("Play as SID…") { model.beginPlay(manual: false) }
             Button("Switch Character Set (Ctrl-Shift)") { model.toggleCharacterSet() }
             Divider()
             Button("Edit Disk Header…") { model.beginEditHeader() }

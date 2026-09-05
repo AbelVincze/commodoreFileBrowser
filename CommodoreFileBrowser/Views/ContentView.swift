@@ -105,7 +105,7 @@ struct ContentView: View {
                   isActive: model.activeSide == side,
                   status: model.statusMessage,
                   onActivate: { model.activeSide = side },
-                  onOpen: { p.open() })
+                  onOpen: { model.activeSide = side; model.activateItem() })
     }
 
     private var functionKeys: [FunctionKey] {
@@ -182,6 +182,9 @@ struct ContentView: View {
                                 onCancel: { model.sheet = nil },
                                 onSave: { model.sheet = nil; model.performSaveAndLeave() },
                                 onDiscard: { model.sheet = nil; model.performDiscard() })
+        case .player(let request):
+            SIDPlayerSheet(request: request, palette: palette, player: model.player,
+                           onClose: { model.player.stop(); model.sheet = nil })
         case .viewer(let content):
             ViewerSheet(content: content, palette: palette, settings: settings,
                         onClose: { model.sheet = nil })

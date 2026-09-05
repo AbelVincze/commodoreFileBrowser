@@ -189,9 +189,11 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				OTHER_CFLAGS = "-Wno-logical-not-parentheses";
 				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "CommodoreFileBrowser/CommodoreFileBrowser-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -214,9 +216,11 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				OTHER_CFLAGS = "-Wno-logical-not-parentheses";
 				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "CommodoreFileBrowser/CommodoreFileBrowser-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;

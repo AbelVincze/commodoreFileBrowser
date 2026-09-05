@@ -658,6 +658,73 @@ do {
 
     csid_scope_enable(0)
 
+    // Trigger sync. Tested on a controlled wave first: a real tune changes what
+    // it is playing between frames, so drift there measures the music, not the
+    // alignment.
+    do {
+        func square(period: Int, phase: Int, count: Int = 2048) -> [Int16] {
+            (0..<count).map { ((($0 + phase) % period) < period / 2) ? 8000 : -8000 }
+        }
+        // The same wave caught at two different phases must produce the same
+        // picture once triggered.
+        let first = square(period: 100, phase: 0)
+        let second = square(period: 100, phase: 37)
+        let w = ScopeRenderer.displayWindow
+        let s1 = ScopeRenderer.triggerOffset(first), s2 = ScopeRenderer.triggerOffset(second)
+        check(s1 != s2, "the two phases trigger at different offsets (\(s1) and \(s2))")
+        check(Array(first[s1..<(s1 + w)]) == Array(second[s2..<(s2 + w)]),
+              "triggered windows are identical despite the phase difference")
+        check(Array(first[0..<w]) != Array(second[0..<w]),
+              "and untriggered they would not have been")
+
+        // Every trigger must land on a rising crossing.
+        for phase in [0, 13, 49, 71, 99] {
+            let wave = square(period: 100, phase: phase)
+            let start = ScopeRenderer.triggerOffset(wave)
+            check(start > 0 && wave[start] > 0 && wave[start - 1] < 0,
+                  "phase \(phase) triggers on a rising edge at \(start)")
+        }
+
+        check(ScopeRenderer.triggerOffset([Int16](repeating: 0, count: 2048)) == 0,
+              "silence triggers at 0")
+        check(ScopeRenderer.triggerOffset([Int16](repeating: 0, count: 10)) == 0,
+              "a buffer shorter than the window is safe")
+    }
+
+    // On a real tune, every frame that triggers must still begin on a rising
+    // crossing — that property is what keeps successive frames in step.
+    do {
+        cSID_init(44100)
+        threeTune.payload.withUnsafeBufferPointer {
+            csid_load($0.baseAddress, Int32($0.count), UInt32(threeTune.loadAddress))
+        }
+        csid_set_addresses(UInt32(threeTune.initAddress), UInt32(threeTune.playAddress))
+        csid_set_sid(8580, 0, 0); csid_set_speed_hz(0)
+        csid_start(0, threeTune.selector)
+        csid_scope_enable(1)
+        var advance = [Int16](repeating: 0, count: 882)
+
+        var fired = 0, rising = 0
+        for _ in 0..<40 {
+            advance.withUnsafeMutableBufferPointer { csid_render($0.baseAddress, 882) }
+            let length = Int(csid_scope_length())
+            var buf = [Int16](repeating: 0, count: length)
+            buf.withUnsafeMutableBufferPointer { csid_scope_read(1, $0.baseAddress, Int32(length)) }
+            let start = ScopeRenderer.triggerOffset(buf)
+            if start > 0 {
+                fired += 1
+                // The contract is hysteresis, not a sign change on the very
+                // previous sample: the signal fell below the threshold at some
+                // point before rising back through it. The sample just before
+                // the trigger may sit inside the dead band.
+                if buf[start] >= 400, buf[0..<start].contains(where: { $0 < -400 }) { rising += 1 }
+            }
+        }
+        check(fired > 20, "the trigger fired on \(fired) of 40 frames of real audio")
+        check(rising == fired, "all \(fired) rose through the threshold after falling below it")
+        csid_scope_enable(0)
+    }
+
     // Speed and chip model change without restarting the tune. csid_start
     // zeroes the play-call counter, so a counter that keeps climbing across a
     // change is proof that init was not re-run.

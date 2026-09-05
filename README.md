@@ -252,7 +252,13 @@ its CIA timer asks for.
 
 ### Oscilloscope
 
-An optional scope draws either the mixed output or one trace per voice. Per
+An optional scope draws either the mixed output or one trace per voice. Each
+frame starts at a rising crossing of zero rather than wherever the buffer
+happens to begin, so the trace stands still instead of sliding across the cell —
+the same trigger an oscilloscope uses. Hysteresis stops a wave dithering around
+zero from firing several times a cycle. Noise never locks, which is right: there
+is no phase to lock to.
+ Per
 voice it is always **three rows**, one column per SID chip, so a column is that
 chip's voices 1-3 — 3 traces for one chip, 6 for two, 9 for three. (The engine
 emulates at most three chips, so nine voices is the ceiling.)

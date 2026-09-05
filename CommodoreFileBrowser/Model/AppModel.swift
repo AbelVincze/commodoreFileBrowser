@@ -179,12 +179,18 @@ final class AppModel: ObservableObject {
 
     // MARK: - Playing
 
-    /// Up and down step through the files, left and right through the songs
-    /// inside one. Anything else, including typing in the address fields, is
-    /// left alone.
+    /// Command with the arrows drives the player: up and down step through the
+    /// files, left and right through the songs inside one.
+    ///
+    /// Plain arrows cannot be used. The sheet's address fields hold the
+    /// keyboard, so the field editor takes them first and the player never sees
+    /// them. Requiring Command also makes this deliberate rather than something
+    /// that fires while typing an address.
+    ///
+    /// Consuming the event here keeps it from reaching the menu, where Command
+    /// with up or down rearranges entries in the directory behind the sheet.
     private func handlePlayerKey(_ event: NSEvent) -> Bool {
-        // A field editor has the keyboard: arrows belong to the caret.
-        if let responder = NSApp.keyWindow?.firstResponder, responder is NSTextView { return false }
+        guard event.modifierFlags.contains(.command) else { return false }
         switch Int(event.keyCode) {
         case 126: playNeighbour(-1)          // up
         case 125: playNeighbour(1)           // down

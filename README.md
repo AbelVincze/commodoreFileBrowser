@@ -238,10 +238,12 @@ needing them typed in waits. The SID model and the oscilloscope settings are
 remembered from one tune to the next, and the remembered model takes precedence
 over the one a PSID header asks for.
 
-With the player open, `↑` and `↓` play the previous and next file, stepping over
-the `DEL` rules a directory is decorated with, and `←` and `→` walk the A,X,Y
-byte so a multi-song file can be gone through a song at a time. Arrows typed
-into the address fields still move the caret.
+With the player open, `⌘↑` and `⌘↓` play the previous and next file, stepping
+over the `DEL` rules a directory is decorated with, and `⌘←` and `⌘→` walk the
+A,X,Y byte so a multi-song file can be gone through a song at a time. They take
+Command because the sheet's address fields hold the keyboard and would otherwise
+swallow a bare arrow; holding Command also stops `⌘↑`/`⌘↓` from rearranging the
+directory behind the sheet.
 
 A song is chosen by the byte written to A, X and Y before init, which is what
 the `Song` stepper sets. Playback speed is 50, 100, 200 or 400 Hz, any figure

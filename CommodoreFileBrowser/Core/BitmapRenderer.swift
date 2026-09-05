@@ -17,6 +17,11 @@ struct BitmapLayout: Codable, Hashable {
     var displayWidth: Int = 320
     var magnification: Int = 2
     var invert: Bool = false
+    /// Bytes each block advances by, rounded up to this. Sprite data sits on
+    /// $40 boundaries but only fills 63 of those 64 bytes, so without an align
+    /// of 64 every sprite after the first slides one byte to the left. 0 or 1
+    /// means blocks pack tight, which is right for everything else.
+    var blockAlign: Int = 0
 
     /// Block width is rounded up to a whole number of bytes, and the display
     /// width down to a whole number of blocks, so the grid always divides.
@@ -25,19 +30,28 @@ struct BitmapLayout: Codable, Hashable {
         l.blockWidth = max(8, ((blockWidth + 7) / 8) * 8)
         l.blockHeight = max(1, blockHeight)
         l.magnification = min(16, max(1, magnification))
+        l.blockAlign = max(0, blockAlign)
         let blocks = max(1, displayWidth / l.blockWidth)
         l.displayWidth = blocks * l.blockWidth
         return l
     }
 
     var bytesPerBlockRow: Int { max(1, blockWidth / 8) }
+    /// Bytes a block actually draws.
     var bytesPerBlock: Int { bytesPerBlockRow * max(1, blockHeight) }
+    /// Bytes a block consumes, which is more than it draws when aligned.
+    var blockStride: Int {
+        guard blockAlign > 1 else { return bytesPerBlock }
+        return ((bytesPerBlock + blockAlign - 1) / blockAlign) * blockAlign
+    }
     var blocksPerRow: Int { max(1, displayWidth / max(8, blockWidth)) }
 
-    /// Pixel position of the left-hand edge of a byte.
-    func position(ofByte index: Int) -> (x: Int, y: Int) {
-        let block = index / bytesPerBlock
-        let within = index % bytesPerBlock
+    /// Pixel position of the left-hand edge of a byte, or nil when the byte
+    /// falls in the padding an aligned block leaves at its end.
+    func position(ofByte index: Int) -> (x: Int, y: Int)? {
+        let block = index / blockStride
+        let within = index % blockStride
+        guard within < bytesPerBlock else { return nil }
         return (x: (block % blocksPerRow) * blockWidth + (within % bytesPerBlockRow) * 8,
                 y: (block / blocksPerRow) * blockHeight + (within / bytesPerBlockRow))
     }
@@ -50,13 +64,13 @@ struct BitmapLayout: Codable, Hashable {
         let blockY = y / blockHeight
         let byteCol = (x % blockWidth) / 8
         let byteRow = y % blockHeight
-        return (blockY * blocksPerRow + blockX) * bytesPerBlock
+        return (blockY * blocksPerRow + blockX) * blockStride
             + byteRow * bytesPerBlockRow + byteCol
     }
 
     /// The block a byte belongs to, in pixels, for the hover highlight.
     func blockRect(forByte index: Int) -> CGRect {
-        let block = index / bytesPerBlock
+        let block = index / blockStride
         return CGRect(x: (block % blocksPerRow) * blockWidth,
                       y: (block / blocksPerRow) * blockHeight,
                       width: blockWidth, height: blockHeight)
@@ -64,7 +78,7 @@ struct BitmapLayout: Codable, Hashable {
 
     /// Rows needed to draw `count` bytes.
     func pixelHeight(forByteCount count: Int) -> Int {
-        let blocks = (count + bytesPerBlock - 1) / bytesPerBlock
+        let blocks = (count + blockStride - 1) / blockStride
         let rows = (blocks + blocksPerRow - 1) / blocksPerRow
         return max(1, rows) * blockHeight
     }
@@ -96,10 +110,15 @@ enum BitmapPreset: String, CaseIterable, Identifiable {
     func layout(basedOn current: BitmapLayout) -> BitmapLayout {
         var l = current
         switch self {
-        case .hires:   l.blockWidth = 8;  l.blockHeight = 8;  l.displayWidth = 320
-        case .charset: l.blockWidth = 8;  l.blockHeight = 8;  l.displayWidth = 128
-        case .sprites: l.blockWidth = 24; l.blockHeight = 21; l.displayWidth = 192
-        case .linear:  l.blockWidth = current.displayWidth; l.blockHeight = 1
+        case .hires:
+            l.blockWidth = 8;  l.blockHeight = 8;  l.displayWidth = 320; l.blockAlign = 0
+        case .charset:
+            l.blockWidth = 8;  l.blockHeight = 8;  l.displayWidth = 128; l.blockAlign = 0
+        case .sprites:
+            // 63 bytes drawn out of every 64 in memory.
+            l.blockWidth = 24; l.blockHeight = 21; l.displayWidth = 192; l.blockAlign = 64
+        case .linear:
+            l.blockWidth = current.displayWidth; l.blockHeight = 1; l.blockAlign = 0
         }
         return l.normalized
     }
@@ -162,8 +181,7 @@ final class BitmapRenderer {
 
         for (index, raw) in data.enumerated() {
             let byte = raw ^ mask
-            guard byte != 0 else { continue }
-            let p = layout.position(ofByte: index)
+            guard byte != 0, let p = layout.position(ofByte: index) else { continue }
             guard p.y < h else { break }
             let rowBase = (p.y * w + p.x) * 4
             for bit in 0..<8 where (byte & (0x80 >> UInt8(bit))) != 0 {

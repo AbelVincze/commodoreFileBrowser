@@ -173,10 +173,22 @@ mapping — and it means the interesting layouts are just numbers:
 | Sprites | 24x21 blocks, 192 wide | 8 sprites per row |
 | Linear | one byte row after another | plain raster order |
 
-The preset is guessed from the file's size when the viewer opens, and the block
-width, block height, display width, zoom and invert are all editable underneath
-it. A block width that is not a whole number of bytes rounds up, and the display
-width settles on a whole number of blocks, so the grid always divides.
+The preset is guessed from the file's size when the viewer opens, and every
+number stays editable underneath it. A block width that is not a whole number of
+bytes rounds up, and the display width settles on a whole number of blocks, so
+the grid always divides.
+
+**Align** is what makes the sprite preset actually line up. A sprite occupies 64
+bytes in memory but only fills 63 of them, so without an align of 64 every
+sprite after the first slides one byte — eight pixels — to the left, and the
+bank stair-steps across the screen. Align rounds each block's stride up to 2, 4,
+8 … 512 bytes; the leftover bytes are consumed but never drawn. Everything else
+packs tight at align *None*.
+
+**Offset** skips bytes before drawing, on top of whatever Raw or C64 already
+skipped, for scrubbing into data that does not start on a boundary. It takes
+decimal or hex (`$0801`, `0x801`), and the ±1 / ±blk buttons step by a byte or a
+whole block.
 
 Hovering reports the byte's offset, its C64 address, its value and its pixel and
 block coordinates, and outlines the block it belongs to. *Save as PNG…* writes

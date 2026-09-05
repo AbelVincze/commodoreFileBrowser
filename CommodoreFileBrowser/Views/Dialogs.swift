@@ -276,6 +276,8 @@ struct ViewerSheet: View {
     /// Block geometry is seeded from the file's size, since it depends on what
     /// the file is; zoom and invert come from the remembered preferences.
     @State private var layout: BitmapLayout
+    /// Lives here rather than in the pane so it survives a Raw/C64 switch.
+    @State private var displayOffset = 0
 
     init(content: ViewerContent, palette: Palette, settings: SettingsStore,
          onClose: @escaping () -> Void) {
@@ -372,7 +374,8 @@ struct ViewerSheet: View {
                            baseAddress: c64View ? (loadAddress ?? 0) : 0,
                            fileName: content.title,
                            palette: palette,
-                           layout: $layout)
+                           layout: $layout,
+                           displayOffset: $displayOffset)
             } else {
                 hexDump
             }

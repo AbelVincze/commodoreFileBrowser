@@ -313,14 +313,17 @@ do {
     for raw in [BitmapLayout(blockWidth: 8, blockHeight: 8, displayWidth: 320),
                 BitmapLayout(blockWidth: 24, blockHeight: 21, displayWidth: 192),
                 BitmapLayout(blockWidth: 8, blockHeight: 1, displayWidth: 128),
-                BitmapLayout(blockWidth: 13, blockHeight: 5, displayWidth: 200)] {
+                BitmapLayout(blockWidth: 13, blockHeight: 5, displayWidth: 200),
+                BitmapLayout(blockWidth: 24, blockHeight: 21, displayWidth: 192, blockAlign: 64),
+                BitmapLayout(blockWidth: 8, blockHeight: 8, displayWidth: 128, blockAlign: 16)] {
         let l = raw.normalized
         var ok = true
         for i in 0..<4000 {
-            let p = l.position(ofByte: i)
+            // Padding bytes have no pixel; every drawn byte must map back to itself.
+            guard let p = l.position(ofByte: i) else { continue }
             if l.byteIndex(atX: p.x, y: p.y) != i { ok = false; break }
         }
-        check(ok, "round trip \(l.blockWidth)x\(l.blockHeight) @\(l.displayWidth)")
+        check(ok, "round trip \(l.blockWidth)x\(l.blockHeight) @\(l.displayWidth) align \(l.blockAlign)")
     }
 
     // A width that is not a whole number of bytes rounds up, and the display
@@ -332,16 +335,31 @@ do {
     // Hires: 8x8 cells laid out cell by cell, exactly like a C64 screen.
     let hires = BitmapPreset.hires.layout(basedOn: BitmapLayout())
     check(hires.blocksPerRow == 40, "hires is 40 cells across")
-    check(hires.position(ofByte: 0) == (0, 0), "byte 0 at (0,0)")
-    check(hires.position(ofByte: 1) == (0, 1), "byte 1 drops a row inside the cell")
-    check(hires.position(ofByte: 8) == (8, 0), "byte 8 starts the next cell")
-    check(hires.position(ofByte: 320) == (0, 8), "byte 320 wraps to the second cell row")
+    func xy(_ l: BitmapLayout, _ i: Int) -> (Int, Int) {
+        l.position(ofByte: i).map { ($0.x, $0.y) } ?? (-1, -1)
+    }
+    check(xy(hires, 0) == (0, 0), "byte 0 at (0,0)")
+    check(xy(hires, 1) == (0, 1), "byte 1 drops a row inside the cell")
+    check(xy(hires, 8) == (8, 0), "byte 8 starts the next cell")
+    check(xy(hires, 320) == (0, 8), "byte 320 wraps to the second cell row")
     check(hires.pixelHeight(forByteCount: 8000) == 200, "8000 bytes is 200 rows tall")
 
-    // Sprites: 63 used bytes of a 64 byte slot, 8 across.
+    // Sprites: 63 drawn bytes inside a 64 byte slot, 8 across. Without the
+    // align every sprite after the first would slide a byte to the left.
     let sprite = BitmapPreset.sprites.layout(basedOn: BitmapLayout())
-    check(sprite.bytesPerBlock == 63, "a sprite block holds 63 bytes")
+    check(sprite.bytesPerBlock == 63, "a sprite draws 63 bytes")
+    check(sprite.blockAlign == 64 && sprite.blockStride == 64, "but consumes 64")
     check(sprite.blocksPerRow == 8, "8 sprites per row")
+    check(sprite.position(ofByte: 63) == nil, "the 64th byte is padding, not drawn")
+    check(xy(sprite, 64) == (24, 0), "the second sprite starts at byte 64, not 63")
+    check(xy(sprite, 62) == (16, 20), "the first sprite ends at its bottom right")
+    check(sprite.pixelHeight(forByteCount: 64 * 8) == 21, "8 sprites fit on one row")
+
+    // Align only ever pads; it never overlaps or drops drawn bytes.
+    var tight = sprite
+    tight.blockAlign = 0
+    check(tight.blockStride == 63, "align 0 packs tight")
+    check(xy(tight, 63) == (24, 0), "and then the second sprite starts at 63")
 
     // Suggestions from file size.
     check(BitmapPreset.suggested(forByteCount: 8000) == .hires, "8000 bytes suggests hires")
@@ -355,7 +373,7 @@ do {
     check(image != nil, "hires image renders")
     if let image, let rep = image.representations.first as? NSBitmapImageRep {
         check(rep.pixelsWide == 320 && rep.pixelsHigh == 200, "image is 320x200")
-        let p = hires.position(ofByte: 321)
+        let p = hires.position(ofByte: 321) ?? (x: -1, y: -1)
         let lit = rep.colorAt(x: p.x, y: p.y)?.alphaComponent ?? 0
         let dark = rep.colorAt(x: p.x, y: p.y == 0 ? 1 : p.y - 1)?.alphaComponent ?? 1
         check(lit > 0.5, "the lit byte is drawn at (\(p.x),\(p.y))")

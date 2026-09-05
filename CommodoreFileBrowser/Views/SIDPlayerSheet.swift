@@ -41,8 +41,15 @@ struct SIDPlayerSheet: View {
         self.onClose = onClose
         _showScope = State(initialValue: settings.scopeEnabled)
         _scopeMode = State(initialValue: ScopeMode(rawValue: settings.scopeMode) ?? .voices)
-        _initText = State(initialValue: String(format: "%04X", request.detected?.initAddress ?? 0x1000))
-        _playText = State(initialValue: String(format: "%04X", request.detected?.playAddress ?? 0x1003))
+        // With nothing detected, guess the usual jump table: init sits at the
+        // load address and play three bytes on. The load address is the first
+        // two bytes of the PRG.
+        let load = request.data.count > 2
+            ? Int(request.data[0]) | Int(request.data[1]) << 8
+            : 0x1000
+        _initText = State(initialValue: String(format: "%04X", request.detected?.initAddress ?? load))
+        _playText = State(initialValue: String(format: "%04X",
+                                               request.detected?.playAddress ?? ((load + 3) & 0xFFFF)))
         _speedText = State(initialValue: "0")
     }
 

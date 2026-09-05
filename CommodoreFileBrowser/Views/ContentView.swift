@@ -182,10 +182,15 @@ struct ContentView: View {
                                 onCancel: { model.sheet = nil },
                                 onSave: { model.sheet = nil; model.performSaveAndLeave() },
                                 onDiscard: { model.sheet = nil; model.performDiscard() })
-        case .player(let request):
-            SIDPlayerSheet(request: request, palette: palette, player: model.player,
-                           settings: settings,
-                           onClose: { model.player.stop(); model.sheet = nil })
+        case .player:
+            if let request = model.playerRequest {
+                // .id rebuilds the sheet's contents for a new tune while the
+                // sheet itself stays presented.
+                SIDPlayerSheet(request: request, palette: palette, player: model.player,
+                               settings: settings,
+                               onClose: { model.player.stop(); model.sheet = nil })
+                    .id(request.id)
+            }
         case .viewer(let content):
             ViewerSheet(content: content, palette: palette, settings: settings,
                         onClose: { model.sheet = nil })

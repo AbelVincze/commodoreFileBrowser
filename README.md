@@ -238,6 +238,11 @@ needing them typed in waits. The SID model and the oscilloscope settings are
 remembered from one tune to the next, and the remembered model takes precedence
 over the one a PSID header asks for.
 
+With the player open, `↑` and `↓` play the previous and next file, stepping over
+the `DEL` rules a directory is decorated with, and `←` and `→` walk the A,X,Y
+byte so a multi-song file can be gone through a song at a time. Arrows typed
+into the address fields still move the caret.
+
 A song is chosen by the byte written to A, X and Y before init, which is what
 the `Song` stepper sets. Playback speed is 50, 100, 200 or 400 Hz, any figure
 you type, or *Tune* to keep the tune's own timing — 50 Hz vsync, or whatever

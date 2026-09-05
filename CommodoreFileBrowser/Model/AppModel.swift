@@ -35,7 +35,7 @@ enum AppSheet: Identifiable {
     case diskHeader
     case viewer(ViewerContent)
     case addDecoration
-    case player(SIDRequest)
+    case player
     case discardChanges
     case help
 
@@ -49,7 +49,7 @@ enum AppSheet: Identifiable {
         case .diskHeader: return "header"
         case .viewer(let v): return "viewer-\(v.id)"
         case .addDecoration: return "decorate"
-        case .player(let r): return "player-\(r.id)"
+        case .player: return "player"
         case .discardChanges: return "discard"
         case .help: return "help"
         }
@@ -67,6 +67,9 @@ final class AppModel: ObservableObject {
     @Published var sheet: AppSheet?
     @Published var alertMessage: String?
     @Published var statusMessage: String = ""
+    /// The tune the player sheet is showing. Held apart from `sheet` so it can
+    /// change while the sheet stays up.
+    @Published var playerRequest: SIDRequest?
 
     var activePanel: PanelModel { activeSide == .left ? left : right }
     var inactivePanel: PanelModel { activeSide == .left ? right : left }
@@ -132,6 +135,7 @@ final class AppModel: ObservableObject {
 
     /// Returns true when the key was consumed by the browser.
     func handleKey(_ event: NSEvent) -> Bool {
+        if case .player = sheet { return handlePlayerKey(event) }
         guard sheet == nil else { return false }
         let shift = event.modifierFlags.contains(.shift)
         let command = event.modifierFlags.contains(.command)
@@ -175,6 +179,22 @@ final class AppModel: ObservableObject {
 
     // MARK: - Playing
 
+    /// Up and down step through the files, left and right through the songs
+    /// inside one. Anything else, including typing in the address fields, is
+    /// left alone.
+    private func handlePlayerKey(_ event: NSEvent) -> Bool {
+        // A field editor has the keyboard: arrows belong to the caret.
+        if let responder = NSApp.keyWindow?.firstResponder, responder is NSTextView { return false }
+        switch Int(event.keyCode) {
+        case 126: playNeighbour(-1)          // up
+        case 125: playNeighbour(1)           // down
+        case 123: adjustSelector(-1)         // left
+        case 124: adjustSelector(1)          // right
+        default: return false
+        }
+        return true
+    }
+
     /// Return enters a folder, a volume or an image, and plays anything else.
     func activateItem() {
         guard let item = activePanel.currentItem else { return }
@@ -188,12 +208,44 @@ final class AppModel: ObservableObject {
             let payload = try read(item, from: activePanel)
             let bytes = [UInt8](payload.data)
             guard bytes.count > 2 else { alertMessage = "That file is too short to be a tune."; return }
-            sheet = .player(SIDRequest(
+            playerRequest = SIDRequest(
                 name: item.title,
                 data: bytes,
                 detected: manual ? nil : SIDTuneLoader.detect(name: item.title, data: bytes),
-                destination: exportDirectory))
+                destination: exportDirectory)
+            sheet = .player
         } catch { fail(error) }
+    }
+
+    /// Step to the neighbouring playable file and play it, so a disk of tunes
+    /// can be walked through without leaving the player.
+    func playNeighbour(_ delta: Int) {
+        let items = activePanel.items
+        var index = activePanel.cursor
+        while true {
+            index += delta
+            guard items.indices.contains(index) else { return }   // stop at either end
+            if isPlayable(items[index]) { break }
+        }
+        activePanel.moveCursor(to: index)
+        beginPlay(manual: false)
+    }
+
+    /// A DEL entry is a rule drawn in a directory listing, not a file, so
+    /// stepping through tunes has to pass over it.
+    private func isPlayable(_ item: PanelItem) -> Bool {
+        switch item.kind {
+        case .file: return true
+        case .cbmFile: return item.cbm?.type != .del && item.byteSize > 0
+        default: return false
+        }
+    }
+
+    /// Nudge the byte written to A, X and Y, which re-runs init on the new song.
+    func adjustSelector(_ delta: Int) {
+        let next = Int(player.selector) + delta
+        guard (0...255).contains(next) else { return }
+        player.selector = UInt8(next)
     }
 
     /// Where an exported video lands: the folder on show, or the folder holding

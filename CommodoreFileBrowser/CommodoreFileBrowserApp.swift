@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct CommodoreFileBrowserApp: App {
 
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var settings: SettingsStore
     @StateObject private var model: AppModel
 
@@ -16,10 +17,7 @@ struct CommodoreFileBrowserApp: App {
         WindowGroup {
             ContentView(model: model, settings: settings)
                 .frame(minWidth: 760, minHeight: 460)
-                .onReceive(NotificationCenter.default.publisher(
-                    for: NSApplication.willTerminateNotification)) { _ in
-                    model.saveState()
-                }
+                .onAppear { appDelegate.model = model }
         }
         // The browser paints its own title bar area, so the system one is
         // hidden: a WindowGroup keeps its own background behind a standard

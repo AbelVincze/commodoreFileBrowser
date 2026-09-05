@@ -101,14 +101,18 @@ enum SIDTuneLoader {
 
     // MARK: - The file name convention
 
-    /// `Z10 I1000 P1003` — a name, the init address, the play address. A `!`
+    /// `Z10 I1000 P1003` — a name, the init address, the play address. Matched
+    /// without regard to case: a disk carries these upper case, but the same
+    /// name on the Mac may be written `z900 if000 pf003`. A `!`
     /// takes the place of the `I` (or trails the name) when the tune holds more
     /// than one song. Real disks also carry run-together spellings such as
     /// `Z101 !E006PPE000`, so both halves are matched loosely, and the play
     /// address is only looked for after the init address to stop a `P` in the
     /// name itself from being mistaken for it.
-    private static let initPattern = try! NSRegularExpression(pattern: "[I!]([0-9A-Fa-f]{4})")
-    private static let playPattern = try! NSRegularExpression(pattern: "P+([0-9A-Fa-f]{4})")
+    private static let initPattern = try! NSRegularExpression(
+        pattern: "[I!]([0-9A-F]{4})", options: .caseInsensitive)
+    private static let playPattern = try! NSRegularExpression(
+        pattern: "P+([0-9A-F]{4})", options: .caseInsensitive)
 
     static func addressesFromName(_ name: String) -> (init_: Int, play: Int, multi: Bool)? {
         let full = NSRange(name.startIndex..., in: name)

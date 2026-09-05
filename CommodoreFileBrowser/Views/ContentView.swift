@@ -184,6 +184,7 @@ struct ContentView: View {
                                 onDiscard: { model.sheet = nil; model.performDiscard() })
         case .player(let request):
             SIDPlayerSheet(request: request, palette: palette, player: model.player,
+                           settings: settings,
                            onClose: { model.player.stop(); model.sheet = nil })
         case .viewer(let content):
             ViewerSheet(content: content, palette: palette, settings: settings,

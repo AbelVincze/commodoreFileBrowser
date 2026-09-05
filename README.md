@@ -220,11 +220,18 @@ The addresses it needs are worked out three ways:
 * **PSID / RSID header** — load, init and play addresses, subtune count,
   title, author and SID model all come from the header.
 * **The file name** — `Z10 I1000 P1003` gives init `$1000` and play `$1003`.
+  Case does not matter, so a file written `z900 if000 pf003` on the Mac works
+  the same as the upper case form a disk carries.
   A `!` in place of the `I` (`Z108 !2800 P2803`), or trailing the name, marks a
   tune with more than one song. Run-together spellings such as
   `Z101 !E006PPE000` parse too; names like `PLAYER V3.1 0800` correctly do not.
 * **By hand** — anything else, or `⇧Return` to override a wrong guess. The file
   is treated as a PRG, so its first two bytes give the load address.
+
+When the addresses are known the tune starts playing as the sheet opens; a file
+needing them typed in waits. The SID model and the oscilloscope settings are
+remembered from one tune to the next, and the remembered model takes precedence
+over the one a PSID header asks for.
 
 A song is chosen by the byte written to A, X and Y before init, which is what
 the `Song` stepper sets. Playback speed is 50, 100, 200 or 400 Hz, any figure

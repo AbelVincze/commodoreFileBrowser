@@ -210,6 +210,11 @@ final class SettingsStore: ObservableObject {
     @Published var bitmapInvert: Bool { didSet { save() } }
     /// Whether the viewer reads the first two bytes as a load address.
     @Published var viewerUsesC64Offsets: Bool { didSet { save() } }
+    /// SID player preferences, carried from one tune to the next.
+    @Published var sidModel: Int { didSet { save() } }
+    @Published var scopeEnabled: Bool { didSet { save() } }
+    /// Stored as the raw value so the settings store stays clear of the views.
+    @Published var scopeMode: String { didSet { save() } }
 
     private struct Stored: Codable {
         var appearance: AppearanceMode
@@ -223,6 +228,9 @@ final class SettingsStore: ObservableObject {
         var bitmapMagnification: Int?
         var bitmapInvert: Bool?
         var viewerUsesC64Offsets: Bool?
+        var sidModel: Int?
+        var scopeEnabled: Bool?
+        var scopeMode: String?
     }
 
     private static let key = "theme.v1"
@@ -242,6 +250,9 @@ final class SettingsStore: ObservableObject {
         bitmapMagnification = stored?.bitmapMagnification ?? 2
         bitmapInvert = stored?.bitmapInvert ?? false
         viewerUsesC64Offsets = stored?.viewerUsesC64Offsets ?? true
+        sidModel = stored?.sidModel ?? 8580
+        scopeEnabled = stored?.scopeEnabled ?? false
+        scopeMode = stored?.scopeMode ?? "voices"
         loading = false
     }
 
@@ -251,7 +262,8 @@ final class SettingsStore: ObservableObject {
                             charSet: nil, font: font, showHiddenFiles: showHiddenFiles,
                             deleteToTrash: deleteToTrash, splitFraction: splitFraction,
                             bitmapMagnification: bitmapMagnification, bitmapInvert: bitmapInvert,
-                            viewerUsesC64Offsets: viewerUsesC64Offsets)
+                            viewerUsesC64Offsets: viewerUsesC64Offsets,
+                            sidModel: sidModel, scopeEnabled: scopeEnabled, scopeMode: scopeMode)
         if let data = try? JSONEncoder().encode(stored) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

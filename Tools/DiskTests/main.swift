@@ -460,6 +460,8 @@ do {
         ("Z11 I1800 P1803!", 0x1800, 0x1803, true),   // trailing !
         ("Z101 !E006PPE000", 0xE006, 0xE000, true),   // run together, doubled P
         ("Z121 !41C9 P41C0", 0x41C9, 0x41C0, true),
+        ("z900 if000 pf003", 0xF000, 0xF003, false),   // lower case, as written on the Mac
+        ("z50 !ab00 pab03", 0xAB00, 0xAB03, true),
     ]
     for (name, wantInit, wantPlay, wantMulti) in expected {
         if let got = SIDTuneLoader.addressesFromName(name) {

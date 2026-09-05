@@ -44,11 +44,13 @@ final class SIDPlayer: ObservableObject {
 
     // MARK: - Transport
 
-    func load(_ tune: SIDTune) {
+    /// `preferredModel` is the remembered choice and takes precedence over the
+    /// model a PSID header asks for.
+    func load(_ tune: SIDTune, preferredModel: Int? = nil) {
         stop()
         self.tune = tune
         selector = tune.selector
-        sidModel = tune.sidModel ?? 8580
+        sidModel = preferredModel ?? tune.sidModel ?? 8580
         configure()
     }
 

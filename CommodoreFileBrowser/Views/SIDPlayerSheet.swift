@@ -17,25 +17,30 @@ struct SIDPlayerSheet: View {
     let request: SIDRequest
     let palette: Palette
     @ObservedObject var player: SIDPlayer
+    @ObservedObject var settings: SettingsStore
     let onClose: () -> Void
 
     @State private var initText: String
     @State private var playText: String
     @State private var speedText: String
     @State private var loadError: String?
-    @State private var showScope = false
-    @State private var scopeMode: ScopeMode = .voices
+    @State private var showScope: Bool
+    @State private var scopeMode: ScopeMode
     @State private var exportSeconds = "30"
     @State private var exportProgress: Double?
     @State private var exportedTo: String?
 
     private static let speedPresets: [Double] = [0, 50, 100, 200, 400]
 
-    init(request: SIDRequest, palette: Palette, player: SIDPlayer, onClose: @escaping () -> Void) {
+    init(request: SIDRequest, palette: Palette, player: SIDPlayer,
+         settings: SettingsStore, onClose: @escaping () -> Void) {
         self.request = request
         self.palette = palette
         _player = ObservedObject(wrappedValue: player)
+        _settings = ObservedObject(wrappedValue: settings)
         self.onClose = onClose
+        _showScope = State(initialValue: settings.scopeEnabled)
+        _scopeMode = State(initialValue: ScopeMode(rawValue: settings.scopeMode) ?? .voices)
         _initText = State(initialValue: String(format: "%04X", request.detected?.initAddress ?? 0x1000))
         _playText = State(initialValue: String(format: "%04X", request.detected?.playAddress ?? 0x1003))
         _speedText = State(initialValue: "0")
@@ -60,8 +65,18 @@ struct SIDPlayerSheet: View {
         }
         .frame(width: showScope ? 560 : 460)
         .background(palette.color(.window))
-        .onAppear { loadTune() }
-        .onChange(of: showScope) { _, on in player.setScope(enabled: on) }
+        .onAppear {
+            player.setScope(enabled: showScope)
+            loadTune()
+            // Everything needed is already known, so start straight away.
+            if request.detected != nil { player.play() }
+        }
+        .onChange(of: showScope) { _, on in
+            player.setScope(enabled: on)
+            settings.scopeEnabled = on
+        }
+        .onChange(of: scopeMode) { _, mode in settings.scopeMode = mode.rawValue }
+        .onChange(of: player.sidModel) { _, model in settings.sidModel = model }
         .onDisappear { player.setScope(enabled: false); player.stop() }
     }
 
@@ -103,10 +118,6 @@ struct SIDPlayerSheet: View {
                 field("Play", text: $playText)
                 Spacer(minLength: 0)
             }
-            Text("Play $0000 lets the tune install its own interrupt.")
-                .font(.system(size: 9))
-                .foregroundStyle(palette.color(.dim))
-
             HStack(spacing: 8) {
                 Text("Song").font(.system(size: 11)).frame(width: 42, alignment: .leading)
                 Stepper(value: Binding(get: { Int(player.selector) },
@@ -286,6 +297,6 @@ struct SIDPlayerSheet: View {
                                      initAddress: initAddress, playAddress: playAddress)
         }
         guard let tune else { loadError = "The file is too short to be a tune."; return }
-        player.load(tune)
+        player.load(tune, preferredModel: settings.sidModel)
     }
 }

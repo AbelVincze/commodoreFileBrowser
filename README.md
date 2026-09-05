@@ -231,12 +231,26 @@ the `Song` stepper sets. Playback speed is 50, 100, 200 or 400 Hz, any figure
 you type, or *Tune* to keep the tune's own timing — 50 Hz vsync, or whatever
 its CIA timer asks for.
 
+### Oscilloscope
+
+An optional scope draws either the mixed output or one trace per voice. Per
+voice it is always **three rows**, one column per SID chip, so a column is that
+chip's voices 1-3 — 3 traces for one chip, 6 for two, 9 for three. (The engine
+emulates at most three chips, so nine voices is the ceiling.)
+
+*Export…* writes the scope to an `.mp4` with the tune as its soundtrack, into
+the folder on show — or the folder holding the image, when the panel is inside
+one. Rendering is offline rather than real time: the soundtrack is rendered
+first, then the engine is rewound and replayed a video frame at a time, so
+picture and sound stay in step however long the export takes. A three second
+clip takes well under a second.
+
 The engine is [cSID-light](http://hermit.sidrip.com) by Hermit
 (Mihaly Horvath), vendored into `Audio/csid.c` with SDL and its `main()`
 removed. His CPU and SID emulation is untouched; the additions are a small API
 for the load address, the init and play routines, the A/X/Y byte and an
-explicit playback rate. Licensed "do what you want, but please mention me as
-its original author".
+explicit playback rate, and a per-voice tap for the oscilloscope. Licensed
+"do what you want, but please mention me as its original author".
 
 ## Themes
 

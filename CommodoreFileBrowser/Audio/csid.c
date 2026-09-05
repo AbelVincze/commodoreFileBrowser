@@ -51,6 +51,11 @@ float ratecnt[9], cutoff_ratio_8580, cutoff_steepness_6581, cap_6581_reciprocal;
 int SIDamount=1, SID_model[3]={8580,8580,8580}, requested_SID_model=-1, sampleratio;
 byte filedata[MAX_DATA_LEN], memory[MAX_DATA_LEN], timermode[0x20], SIDtitle[0x20], SIDauthor[0x20], SIDinfo[0x20];
 int subtune=0;
+int csid_channel_out[9];              // last sample of each voice, for the scope
+#define CSID_SCOPE_LEN 2048
+#define CSID_SCOPE_TRACKS 10          // 9 voices plus the mix
+static short scope_ring[CSID_SCOPE_TRACKS][CSID_SCOPE_LEN];
+static int scope_pos = 0, scope_on = 0;
 double forced_hz = 0.0;              // >0 overrides the tune's own timing
 unsigned long csid_play_calls = 0;   // play-routine invocations, for tests
 unsigned int initaddr, playaddr, playaddf, SID_address[3]={0xD400,0,0}; 
@@ -122,6 +127,16 @@ void csid_render (short *stream, int frames) //one 16-bit mono sample per frame
   if (SIDamount>=2) output += SID(1,SID_address[1]); 
   if (SIDamount==3) output += SID(2,SID_address[2]); 
   stream[i] = (short)output;
+  if (scope_on) {   //keep a rolling window of each voice for the oscilloscope
+   int c, v;
+   for (c = 0; c < 9; c++) {
+    v = csid_channel_out[c];
+    if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+    scope_ring[c][scope_pos] = (short)v;
+   }
+   scope_ring[9][scope_pos] = (short)output;
+   scope_pos = (scope_pos + 1) % CSID_SCOPE_LEN;
+  }
  }
 }
 
@@ -317,7 +332,7 @@ int SID(char num, unsigned int baseaddr) //the SID emulation itself ('num' is th
  //better keep these variables static so they won't slow down the routine like if they were internal automatic variables always recreated
  static byte channel, ctrl, SR, prevgate, wf, test, *sReg, *vReg;
  static unsigned int accuadd, MSB, pw, wfout;
- static int tmp, step, lim, nonfilt, filtin, filtout, output;
+ static int tmp, step, lim, nonfilt, filtin, filtout, output, chanout;
  static float period, steep, rDS_VCR_FET, cutoff[3], resonance[3], ftmp;
 
  filtin=nonfilt=0; sReg = &memory[baseaddr]; vReg = sReg;
@@ -417,9 +432,11 @@ int SID(char num, unsigned int baseaddr) //the SID emulation itself ('num' is th
   prevaccu[channel] = phaseaccu[channel]; sourceMSB[num] = MSB;            //(So the decay is not an exact value. Anyway, we just simply keep the value to avoid clicks and support SounDemon digi later...)
 
   //routing the channel signal to either the filter or the unfiltered master output depending on filter-switch SID-registers
-  if (sReg[0x17] & FILTSW[channel]) filtin += ((int)wfout - 0x8000) * envcnt[channel] / 256;
+  chanout = ((int)wfout - 0x8000) * envcnt[channel] / 256;   //tapped for the oscilloscope
+  if (sReg[0x17] & FILTSW[channel]) { filtin += chanout; csid_channel_out[channel] = chanout; }
   else if ((FILTSW[channel] != 4) || !(sReg[0x18] & OFF3_BITMASK)) 
-   nonfilt += ((int)wfout - 0x8000) * envcnt[channel] / 256;
+   { nonfilt += chanout; csid_channel_out[channel] = chanout; }
+  else csid_channel_out[channel] = 0;   //voice 3 muted by OFF3
  }
  //update readable SID1-registers (some SID tunes might use 3rd channel ENV3/OSC3 value as control)
  if(num==0, memory[1]&3) { sReg[0x1B]=wfout>>8; sReg[0x1C]=envcnt[3]; } //OSC3, ENV3 (some players rely on it)    
@@ -550,6 +567,23 @@ void csid_set_sid (int model, unsigned int addr2, unsigned int addr3) {
  OUTPUT_SCALEDOWN = SID_CHANNEL_AMOUNT * 16 + 26;
  if (SIDamount == 2) OUTPUT_SCALEDOWN /= 0.6;
  else if (SIDamount >= 3) OUTPUT_SCALEDOWN /= 0.4;
+}
+
+void csid_scope_enable (int on) { scope_on = on; if (!on) return;
+ { int c, i; for (c = 0; c < CSID_SCOPE_TRACKS; c++) for (i = 0; i < CSID_SCOPE_LEN; i++) scope_ring[c][i] = 0; }
+ scope_pos = 0;
+}
+
+int csid_scope_length (void) { return CSID_SCOPE_LEN; }
+int csid_sid_count (void) { return SIDamount; }
+
+/// Most recent `count` samples of a track, oldest first. Track 9 is the mix.
+void csid_scope_read (int track, short *dest, int count) {
+ int i, p;
+ if (track < 0 || track >= CSID_SCOPE_TRACKS || count <= 0) return;
+ if (count > CSID_SCOPE_LEN) count = CSID_SCOPE_LEN;
+ p = (scope_pos - count + CSID_SCOPE_LEN * 2) % CSID_SCOPE_LEN;
+ for (i = 0; i < count; i++) { dest[i] = scope_ring[track][p]; p = (p + 1) % CSID_SCOPE_LEN; }
 }
 
 unsigned long csid_play_call_count (void) { return csid_play_calls; }

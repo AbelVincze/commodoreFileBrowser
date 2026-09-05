@@ -191,8 +191,19 @@ final class AppModel: ObservableObject {
             sheet = .player(SIDRequest(
                 name: item.title,
                 data: bytes,
-                detected: manual ? nil : SIDTuneLoader.detect(name: item.title, data: bytes)))
+                detected: manual ? nil : SIDTuneLoader.detect(name: item.title, data: bytes),
+                destination: exportDirectory))
         } catch { fail(error) }
+    }
+
+    /// Where an exported video lands: the folder on show, or the folder holding
+    /// the image when the panel is inside one.
+    var exportDirectory: URL? {
+        switch activePanel.location {
+        case .volumes: return nil
+        case .directory(let url): return url
+        case .image(let url): return url.deletingLastPathComponent()
+        }
     }
 
     // MARK: - Leaving an image

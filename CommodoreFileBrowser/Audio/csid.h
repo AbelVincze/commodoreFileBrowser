@@ -31,6 +31,14 @@ void csid_start(unsigned char subtune, unsigned char axy);
 /// One 16-bit mono sample per frame, at the rate given to cSID_init.
 void csid_render(short *stream, int frames);
 
+/// Oscilloscope capture. Off by default; enabling clears the window.
+void csid_scope_enable(int on);
+int csid_scope_length(void);
+int csid_sid_count(void);
+/// Most recent `count` samples of a track, oldest first. Tracks 0-8 are the
+/// voices in chip order, track 9 is the mix.
+void csid_scope_read(int track, short *dest, int count);
+
 unsigned long csid_play_call_count(void);
 double csid_frame_sampleperiod(void);
 

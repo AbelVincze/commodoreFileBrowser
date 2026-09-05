@@ -4,6 +4,7 @@ setbuf(stdout, nil)
 
 let scratch = NSTemporaryDirectory()
 var failures = 0
+extension Collection { func allMatch(_ p: (Element) -> Bool) -> Bool { !contains { !p($0) } } }
 func check(_ cond: Bool, _ msg: String) {
     print(cond ? "  ok   \(msg)" : "  FAIL \(msg)")
     if !cond { failures += 1 }
@@ -612,6 +613,48 @@ do {
     }
     check(responder != nil,
           "the selector changes the tune: \(responder ?? "none") (tried \(tried))")
+
+    // Per-voice capture for the oscilloscope. Many of these intro tunes use a
+    // single voice, so check against one that is known to use all three.
+    guard let three = img.entries.first(where: { $0.displayName.hasPrefix("ZJ0 ") }),
+          let threeTune = SIDTuneLoader.detect(name: three.displayName,
+                                               data: [UInt8](try img.read(three)))
+    else { throw DiskImageError.fileNotFound }
+
+    cSID_init(44100)
+    threeTune.payload.withUnsafeBufferPointer {
+        csid_load($0.baseAddress, Int32($0.count), UInt32(threeTune.loadAddress))
+    }
+    csid_set_addresses(UInt32(threeTune.initAddress), UInt32(threeTune.playAddress))
+    csid_set_sid(8580, 0, 0); csid_set_speed_hz(0)
+    csid_start(0, threeTune.selector)
+    csid_scope_enable(1)
+
+    let length = Int(csid_scope_length())
+    func track(_ i: Int) -> [Int16] {
+        var out = [Int16](repeating: 0, count: length)
+        out.withUnsafeMutableBufferPointer { csid_scope_read(Int32(i), $0.baseAddress, Int32(length)) }
+        return out
+    }
+    func peak(_ t: [Int16]) -> Int { t.map { abs(Int($0)) }.max() ?? 0 }
+
+    // Peaks are gathered over the whole render: a voice can be silent in any
+    // one 46 ms window even when the tune uses it.
+    var voicePeak = [Int](repeating: 0, count: 10)
+    var chunk = [Int16](repeating: 0, count: 4410)
+    for _ in 0..<40 {
+        chunk.withUnsafeMutableBufferPointer { csid_render($0.baseAddress, 4410) }
+        for t in 0..<10 { voicePeak[t] = max(voicePeak[t], peak(track(t))) }
+    }
+
+    check(csid_sid_count() == 1, "one SID chip, so the scope is 3 rows by 1 column")
+    check(voicePeak[9] > 0, "the mix track carries signal")
+    check((0..<3).allMatch { voicePeak[$0] > 0 },
+          "all three voices sound: \(voicePeak[0]), \(voicePeak[1]), \(voicePeak[2])")
+    check(track(0) != track(1), "voice 1 and voice 2 differ")
+    check((3..<9).allMatch { voicePeak[$0] == 0 }, "voices of absent chips stay silent")
+
+    csid_scope_enable(0)
 
 } catch {
     print("  FAIL sid engine: \(error)"); failures += 1

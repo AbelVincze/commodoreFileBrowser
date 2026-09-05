@@ -497,6 +497,7 @@ struct HelpSheet: View {
         ("+ / - / *", "Mark all, unmark all, invert marks"),
         ("Return", "Enter a folder or an image, or play a file as music"),
         ("⇧Return", "Play, entering the addresses by hand"),
+        ("", "The player has an oscilloscope, and can export it as video"),
         ("← or Delete", "Go up, saving the disk image on the way out"),
         ("", "The cursor returns to where it was in each folder"),
         ("Esc", "Go up without saving the disk image"),

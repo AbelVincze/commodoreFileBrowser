@@ -8,6 +8,8 @@ struct SIDRequest: Identifiable {
     var data: [UInt8]
     /// Nil when nothing could be detected, or when detection was skipped.
     var detected: SIDTune?
+    /// Folder an exported video goes to.
+    var destination: URL?
 }
 
 /// The load form and the transport in one sheet. Closing it stops playback.
@@ -21,6 +23,11 @@ struct SIDPlayerSheet: View {
     @State private var playText: String
     @State private var speedText: String
     @State private var loadError: String?
+    @State private var showScope = false
+    @State private var scopeMode: ScopeMode = .voices
+    @State private var exportSeconds = "30"
+    @State private var exportProgress: Double?
+    @State private var exportedTo: String?
 
     private static let speedPresets: [Double] = [0, 50, 100, 200, 400]
 
@@ -39,13 +46,23 @@ struct SIDPlayerSheet: View {
             header
             Divider().overlay(palette.color(.border))
             form
+            if showScope {
+                Divider().overlay(palette.color(.border))
+                ScopeView(player: player, mode: scopeMode, palette: palette)
+                    .frame(height: scopeMode == .mix ? 90 : 180)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                Divider().overlay(palette.color(.border))
+                exportRow
+            }
             Divider().overlay(palette.color(.border))
             transport
         }
-        .frame(width: 460)
+        .frame(width: showScope ? 560 : 460)
         .background(palette.color(.window))
         .onAppear { loadTune() }
-        .onDisappear { player.stop() }
+        .onChange(of: showScope) { _, on in player.setScope(enabled: on) }
+        .onDisappear { player.setScope(enabled: false); player.stop() }
     }
 
     // MARK: - Header
@@ -134,6 +151,19 @@ struct SIDPlayerSheet: View {
                     }
             }
 
+            HStack(spacing: 8) {
+                Toggle("Oscilloscope", isOn: $showScope).font(.system(size: 11))
+                Spacer(minLength: 0)
+                if showScope {
+                    Picker("", selection: $scopeMode) {
+                        ForEach(ScopeMode.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 150)
+                }
+            }
+
             if let loadError {
                 Text(loadError)
                     .font(.system(size: 10))
@@ -152,6 +182,76 @@ struct SIDPlayerSheet: View {
                 .frame(width: 64)
                 .font(.system(size: 11, design: .monospaced))
                 .onSubmit(loadTune)
+        }
+    }
+
+    // MARK: - Export
+
+    private var exportRow: some View {
+        HStack(spacing: 8) {
+            Text("Video").font(.system(size: 11)).frame(width: 42, alignment: .leading)
+            TextField("30", text: $exportSeconds)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 46)
+                .font(.system(size: 11, design: .monospaced))
+            Text("seconds").font(.system(size: 10)).foregroundStyle(palette.color(.dim))
+            Spacer(minLength: 0)
+            if let exportProgress {
+                ProgressView(value: exportProgress).frame(width: 90)
+            } else {
+                Button("Export…", action: exportVideo)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(request.destination == nil)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottomLeading) {
+            if let exportedTo {
+                Text(exportedTo)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(palette.color(.dim))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .padding(.horizontal, 14)
+            }
+        }
+    }
+
+    private func exportVideo() {
+        guard let folder = request.destination, let tune = player.tune else { return }
+        let seconds = max(1, min(600, Double(exportSeconds) ?? 30))
+        let safeName = (request.detected?.title ?? request.name)
+            .trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "/", with: "-")
+        let url = folder.appendingPathComponent("\(safeName).mp4")
+
+        var settings = SIDVideoExporter.Settings()
+        settings.mode = scopeMode
+        settings.seconds = seconds
+        settings.foreground = NSColor(palette.color(.text)).cgColor
+        settings.background = NSColor(palette.color(.panel)).cgColor
+        settings.grid = NSColor(palette.color(.border)).cgColor
+
+        exportProgress = 0
+        exportedTo = nil
+        let player = self.player
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try SIDVideoExporter.export(tune: tune, player: player, settings: settings, to: url) {
+                    exportProgress = $0
+                }
+                DispatchQueue.main.async {
+                    exportProgress = nil
+                    exportedTo = url.path
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    exportProgress = nil
+                    loadError = error.localizedDescription
+                }
+            }
         }
     }
 

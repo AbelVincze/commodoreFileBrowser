@@ -77,7 +77,7 @@ final class SIDPlayer: ObservableObject {
         configure()
     }
 
-    private func configure() {
+    fileprivate func configure() {
         guard let tune else { return }
         os_unfair_lock_lock(lock)
         cSID_init(Int32(Self.sampleRate))
@@ -92,6 +92,41 @@ final class SIDPlayer: ObservableObject {
         csid_start(selector, selector)
         os_unfair_lock_unlock(lock)
     }
+
+    // MARK: - Oscilloscope
+
+    var sidCount: Int { Int(csid_sid_count()) }
+
+    func setScope(enabled: Bool) { csid_scope_enable(enabled ? 1 : 0) }
+
+    /// A window of recent samples per track, for the tracks the given mode
+    /// draws. Read without locking: a torn read costs at most one ragged frame,
+    /// which is not worth stalling the audio thread for.
+    func scopeSnapshot(mode: ScopeMode) -> [Int: [Int16]] {
+        let length = Int(csid_scope_length())
+        let (rows, columns) = ScopeRenderer.grid(mode: mode, sidCount: sidCount)
+        var out: [Int: [Int16]] = [:]
+        for row in 0..<rows {
+            for column in 0..<columns {
+                let track = ScopeRenderer.track(mode: mode, row: row, column: column)
+                var buffer = [Int16](repeating: 0, count: length)
+                buffer.withUnsafeMutableBufferPointer {
+                    csid_scope_read(Int32(track), $0.baseAddress, Int32(length))
+                }
+                out[track] = buffer
+            }
+        }
+        return out
+    }
+
+    /// Render `frames` samples without touching the audio graph, for the video
+    /// export. The caller must not be playing at the time.
+    func renderOffline(frames: Int, into buffer: inout [Int16]) {
+        buffer.withUnsafeMutableBufferPointer { csid_render($0.baseAddress, Int32(frames)) }
+    }
+
+    /// Re-arm the engine from scratch, used before an offline render.
+    func prepareForOfflineRender() { configure() }
 
     // MARK: - Rendering
 

@@ -30,7 +30,13 @@ struct BitmapPane: View {
             Divider().overlay(palette.color(.border))
             controls.frame(width: 200)
         }
-        .onAppear(perform: rebuild)
+        .onAppear {
+            // The pane is torn down when the viewer switches to hex, so this
+            // field starts empty again while displayOffset, which lives in the
+            // sheet, still holds the real value. Seed it back.
+            offsetText = String(displayOffset)
+            rebuild()
+        }
         .onChange(of: layout) { _, _ in rebuild() }
         .onChange(of: displayOffset) { _, _ in rebuild() }
         .onChange(of: bytes.count) { _, _ in rebuild() }   // Raw <-> C64

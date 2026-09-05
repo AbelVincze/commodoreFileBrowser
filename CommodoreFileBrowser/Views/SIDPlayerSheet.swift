@@ -102,11 +102,27 @@ struct SIDPlayerSheet: View {
             parts.append("from the \(tune.source.rawValue)")
             if let author = tune.author { parts.append(author) }
             if tune.songCount > 1 { parts.append("\(tune.songCount) songs") }
-            parts.append(String(format: "load $%04X", tune.loadAddress))
+            parts.append(contentsOf: extent(load: tune.loadAddress, bytes: tune.payload.count))
         } else {
-            parts.append("addresses not detected — enter them below")
+            // Kept short: the extent that follows is the useful part, and the
+            // line truncates to one line.
+            parts.append("addresses not detected")
+            // A PRG carries its load address in its first two bytes. Where the
+            // code sits and how far it runs are the clues for guessing init and
+            // play, so they are worth showing even when nothing else is known.
+            if request.data.count > 2 {
+                let load = Int(request.data[0]) | Int(request.data[1]) << 8
+                parts.append(contentsOf: extent(load: load, bytes: request.data.count - 2,
+                                                includingEnd: true))
+            }
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func extent(load: Int, bytes: Int, includingEnd: Bool = false) -> [String] {
+        var out = [String(format: "load $%04X", load), String(format: "$%04X bytes", bytes)]
+        if includingEnd { out.append(String(format: "ends $%04X", (load + bytes - 1) & 0xFFFF)) }
+        return out
     }
 
     // MARK: - Form

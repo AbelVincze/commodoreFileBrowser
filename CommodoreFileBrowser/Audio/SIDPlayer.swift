@@ -31,17 +31,24 @@ final class SIDPlayer: ObservableObject {
     private let lock: UnsafeMutablePointer<os_unfair_lock>
     private let scratchCapacity = 8192
     private let scratch: UnsafeMutablePointer<Int16>
+    /// Samples pushed to the output since the tune last started. Counted in the
+    /// render block, so it measures what was actually heard and stops moving
+    /// when playback does. A plain pointer keeps `self` out of that block.
+    private let playedFrames: UnsafeMutablePointer<Int64>
 
     init() {
         lock = .allocate(capacity: 1)
         lock.initialize(to: os_unfair_lock())
         scratch = .allocate(capacity: scratchCapacity)
         scratch.initialize(repeating: 0, count: scratchCapacity)
+        playedFrames = .allocate(capacity: 1)
+        playedFrames.initialize(to: 0)
     }
 
     deinit {
         engine.stop()
         scratch.deallocate()
+        playedFrames.deallocate()
         lock.deallocate()
     }
 
@@ -94,6 +101,7 @@ final class SIDPlayer: ObservableObject {
     fileprivate func configure() {
         guard let tune else { return }
         os_unfair_lock_lock(lock)
+        playedFrames.pointee = 0
         cSID_init(Int32(Self.sampleRate))
         tune.payload.withUnsafeBufferPointer {
             csid_load($0.baseAddress, Int32($0.count), UInt32(tune.loadAddress))
@@ -110,6 +118,9 @@ final class SIDPlayer: ObservableObject {
     // MARK: - Oscilloscope
 
     var sidCount: Int { Int(csid_sid_count()) }
+
+    /// How long the tune has been playing, from the tune's own start.
+    var elapsed: TimeInterval { Double(playedFrames.pointee) / Self.sampleRate }
 
     func setScope(enabled: Bool) { csid_scope_enable(enabled ? 1 : 0) }
 
@@ -151,6 +162,7 @@ final class SIDPlayer: ObservableObject {
         let lock = self.lock
         let scratch = self.scratch
         let capacity = self.scratchCapacity
+        let played = self.playedFrames
 
         let node = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
@@ -168,6 +180,7 @@ final class SIDPlayer: ObservableObject {
                 for i in 0..<chunk { out[done + i] = Float(scratch[i]) / 32768.0 }
                 done += chunk
             }
+            played.pointee += Int64(frames)
             os_unfair_lock_unlock(lock)
             return noErr
         }

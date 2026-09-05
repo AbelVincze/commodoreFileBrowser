@@ -29,6 +29,8 @@ struct SIDPlayerSheet: View {
     @State private var exportSeconds = "30"
     @State private var exportProgress: Double?
     @State private var exportedTo: String?
+    @State private var elapsed: TimeInterval = 0
+    @State private var clock = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     private static let speedPresets: [Double] = [0, 50, 100, 200, 400]
 
@@ -84,6 +86,7 @@ struct SIDPlayerSheet: View {
         }
         .onChange(of: scopeMode) { _, mode in settings.scopeMode = mode.rawValue }
         .onChange(of: player.sidModel) { _, model in settings.sidModel = model }
+        .onReceive(clock) { _ in elapsed = player.elapsed }
         .onDisappear { player.setScope(enabled: false); player.stop() }
     }
 
@@ -298,10 +301,19 @@ struct SIDPlayerSheet: View {
             }
             .keyboardShortcut(.defaultAction)
             Button("Reload") { loadTune(); if player.isPlaying { player.play() } }
+            Text(playTime)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(palette.color(.dim))
+                .monospacedDigit()
             Spacer()
             Button("Close", action: onClose).keyboardShortcut(.cancelAction)
         }
         .padding(14)
+    }
+
+    private var playTime: String {
+        let seconds = Int(elapsed)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     /// Build a tune from whatever the fields currently say and hand it over.

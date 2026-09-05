@@ -8,7 +8,6 @@ let out = ProcessInfo.processInfo.environment["SHOT_DIR"] ?? "."
 let base = URL(fileURLWithPath: "/Users/macc/dev/commodoreFileBrowser/sample_images")
 
 let settings = SettingsStore()
-settings.zoom = 2
 settings.font = PETSCIIFont(rom: .c64, set: .uppercase)
 settings.appearance = ProcessInfo.processInfo.environment["LIGHT"] == nil ? .dark : .light
 
@@ -36,6 +35,18 @@ func captureSheet(_ name: String) {
     if let png = rep.representation(using: .png, properties: [:]) {
         try? png.write(to: URL(fileURLWithPath: "\(out)/\(name).png"))
         print("wrote \(name).png  \(Int(rep.size.width))x\(Int(rep.size.height)) pt")
+    }
+}
+
+func captureNamed(_ name: String) {
+    guard let window = NSApp.windows.first(where: { $0.contentView != nil && $0.isVisible }),
+          let frame = window.contentView?.superview,
+          let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)
+    else { print("no window"); return }
+    frame.cacheDisplay(in: frame.bounds, to: rep)
+    if let png = rep.representation(using: .png, properties: [:]) {
+        try? png.write(to: URL(fileURLWithPath: "\(out)/\(name).png"))
+        print("wrote \(name).png")
     }
 }
 
@@ -171,22 +182,19 @@ func capture() {
     print(String(format: "  difference %.1f pt", abs(topGap - bottomGap)))
 }
 
+// Capture the panels, flip the character set, and capture again. If a font
+// change does not invalidate the rows, the two shots are identical.
 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
     model.left.navigate(to: .directory(URL(fileURLWithPath: "/Users/macc/dev/commodoreFileBrowser")))
     model.right.navigate(to: .image(base.appendingPathComponent("cbmcmd23.d64")))
-    model.activeSide = .left
+    model.activeSide = .right
+    settings.font = PETSCIIFont(rom: .c64, set: .uppercase)
+
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-        capture()
-        // Now open the viewer on a real PRG and capture the sheet.
-        // A real BASIC loader off one of the sample disks.
-        if let image = model.right.image,
-           let entry = image.entries.first(where: { $0.displayName == "LOADCBMCMD" }),
-           let data = try? image.read(entry) {
-            model.sheet = .viewer(ViewerContent(title: entry.displayName, data: data,
-                                                isPRG: true, startInBitmap: false))
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            captureSheet("basic")
+        captureNamed("font_before")
+        settings.font.set = .lowercase
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            captureNamed("font_after")
             exit(0)
         }
     }

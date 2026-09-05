@@ -278,7 +278,7 @@ enum ViewerMode: String, CaseIterable, Identifiable {
 struct ViewerSheet: View {
     let content: ViewerContent
     let palette: Palette
-    let settings: SettingsStore
+    @ObservedObject var settings: SettingsStore
     let onClose: () -> Void
 
     /// C64 view: the first two bytes are read as the load address and become
@@ -295,7 +295,7 @@ struct ViewerSheet: View {
          onClose: @escaping () -> Void) {
         self.content = content
         self.palette = palette
-        self.settings = settings
+        _settings = ObservedObject(wrappedValue: settings)
         self.onClose = onClose
         _mode = State(initialValue: content.startInBitmap ? .bitmap : .hex)
         // C64 offsets are the useful default here, and the choice is remembered.

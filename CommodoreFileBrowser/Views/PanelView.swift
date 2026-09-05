@@ -166,7 +166,9 @@ struct PanelView: View {
                                  isActive: isActive,
                                  isMarked: panel.marked.contains(item.id),
                                  palette: palette,
-                                 settings: settings,
+                                 font: settings.font,
+                                 zoom: settings.zoom,
+                                 rowHeight: settings.rowHeight,
                                  usePETSCII: panel.isImagePanel)
                             .id(item.id)
                             .contentShape(Rectangle())
@@ -218,7 +220,13 @@ struct PanelRow: View {
     let isActive: Bool
     let isMarked: Bool
     let palette: Palette
-    let settings: SettingsStore
+    /// Taken by value, not read off the settings store. A store is a reference,
+    /// so SwiftUI sees an unchanged input and skips redrawing the row; changing
+    /// the character ROM then left every row but the header stale until it was
+    /// touched.
+    let font: PETSCIIFont
+    let zoom: Int
+    let rowHeight: CGFloat
     let usePETSCII: Bool
 
     private var foreground: Color {
@@ -252,7 +260,7 @@ struct PanelRow: View {
         HStack(spacing: 6) {
             if usePETSCII, let line = item.petsciiLine {
                 PETSCIIText(petscii: line, color: foreground,
-                            zoom: settings.zoom, font: settings.font)
+                            zoom: zoom, font: font)
                 Spacer(minLength: 0)
             } else {
                 Image(systemName: icon)
@@ -272,7 +280,7 @@ struct PanelRow: View {
             }
         }
         .padding(.horizontal, PanelLayout.inset)
-        .frame(height: settings.rowHeight, alignment: .leading)
+        .frame(height: rowHeight, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(background)
         .overlay(alignment: .leading) {

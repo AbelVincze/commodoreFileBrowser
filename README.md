@@ -214,9 +214,9 @@ geometry is not, since it depends on what the file is. At most 1 MB is drawn.
 *Settings › Appearance* has Light / Dark / System, four presets (Standard,
 Graphite, Commodore 64, Amber Terminal) and a colour well for each of the
 thirteen roles the browser draws with — separately for the light and the dark
-palette. *Display* sets the character cell size (8, 16 or 24 px), picks the character
-ROM (Commodore 64 or PET) and switches between the upper case/graphics and
-lower case/upper case halves of it.
+palette. *Display* picks the character ROM (Commodore 64 or PET) and switches
+between the upper case/graphics and lower case/upper case halves of it. The
+character cell size is fixed at 16 px, which the panel layout is built around.
 
 ### Character ROMs
 

@@ -72,11 +72,6 @@ private struct DisplaySettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Picker("Character size", selection: $settings.zoom) {
-                Text("Small (8 px)").tag(1)
-                Text("Medium (16 px)").tag(2)
-                Text("Large (24 px)").tag(3)
-            }
             Picker("Character ROM", selection: $settings.font.rom) {
                 ForEach(CharacterROMVariant.allCases) { Text($0.label).tag($0) }
             }
@@ -100,7 +95,7 @@ private struct DisplaySettings: View {
             Spacer()
         }
         .padding(20)
-        .frame(height: 300)
+        .frame(height: 240)
     }
 }
 

@@ -195,8 +195,9 @@ final class SettingsStore: ObservableObject {
     @Published var appearance: AppearanceMode { didSet { save() } }
     @Published var light: Palette { didSet { save() } }
     @Published var dark: Palette { didSet { save() } }
-    /// Character cell zoom for PETSCII rows: 1 = 8pt, 2 = 16pt, 3 = 24pt.
-    @Published var zoom: Int { didSet { save() } }
+    /// Character cell size for PETSCII rows, in whole pixels per C64 pixel.
+    /// Fixed rather than a setting: the panels are laid out around it.
+    let zoom = 2
     @Published var font: PETSCIIFont { didSet { save() } }
     @Published var showHiddenFiles: Bool { didSet { save() } }
     /// Deleting host files puts them in the Trash rather than erasing them.
@@ -214,7 +215,6 @@ final class SettingsStore: ObservableObject {
         var appearance: AppearanceMode
         var light: Palette
         var dark: Palette
-        var zoom: Int
         var charSet: CharacterROM.CharSet?   // pre-ROM-picker settings
         var font: PETSCIIFont?
         var showHiddenFiles: Bool
@@ -234,7 +234,6 @@ final class SettingsStore: ObservableObject {
         appearance = stored?.appearance ?? .system
         light = stored?.light ?? ThemePresets.standardLight
         dark = stored?.dark ?? ThemePresets.standardDark
-        zoom = stored?.zoom ?? 2
         // Carry an older settings file over to the new font field.
         font = stored?.font ?? PETSCIIFont(rom: .c64, set: stored?.charSet ?? .uppercase)
         showHiddenFiles = stored?.showHiddenFiles ?? false
@@ -249,7 +248,7 @@ final class SettingsStore: ObservableObject {
     private func save() {
         guard !loading else { return }
         let stored = Stored(appearance: appearance, light: light, dark: dark,
-                            zoom: zoom, charSet: nil, font: font, showHiddenFiles: showHiddenFiles,
+                            charSet: nil, font: font, showHiddenFiles: showHiddenFiles,
                             deleteToTrash: deleteToTrash, splitFraction: splitFraction,
                             bitmapMagnification: bitmapMagnification, bitmapInvert: bitmapInvert,
                             viewerUsesC64Offsets: viewerUsesC64Offsets)

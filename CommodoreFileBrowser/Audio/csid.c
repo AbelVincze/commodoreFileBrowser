@@ -57,6 +57,7 @@ int csid_channel_out[9];              // last sample of each voice, for the scop
 static short scope_ring[CSID_SCOPE_TRACKS][CSID_SCOPE_LEN];
 static int scope_pos = 0, scope_on = 0;
 double forced_hz = 0.0;              // >0 overrides the tune's own timing
+float tune_sampleperiod = 0.0;       // the rate the tune itself asked for
 unsigned long csid_play_calls = 0;   // play-routine invocations, for tests
 unsigned int initaddr, playaddr, playaddf, SID_address[3]={0xD400,0,0}; 
 int samplerate = DEFAULT_SAMPLERATE; 
@@ -96,6 +97,7 @@ void csid_start (unsigned char subt, unsigned char axy)
  //frame_sampleperiod = (memory[0xDC05]!=0 || (!timermode[subtune] && playaddf))? samplerate/PAL_FRAMERATE : (memory[0xDC04] + memory[0xDC05]*256) / clock_ratio; 
  if(playaddf==0) { playaddr = ((memory[1]&3)<2)? memory[0xFFFE]+memory[0xFFFF]*256 : memory[0x314]+memory[0x315]*256; }
  else { playaddr=playaddf; if (playaddr>=0xE000 && memory[1]==0x37) memory[1]=0x35; } //player under KERNAL (Crystal Kingdom Dizzy)
+ tune_sampleperiod = frame_sampleperiod;   // kept so "tune timing" can be restored live
  if (forced_hz > 0.0) frame_sampleperiod = samplerate / forced_hz;   // explicit playback rate wins
  initCPU(playaddr); framecnt=1; finished=0; CPUtime=0; csid_play_calls=0;
 }
@@ -110,7 +112,8 @@ void csid_render (short *stream, int frames) //one 16-bit mono sample per frame
    while (CPUtime<=clock_ratio) { 
     pPC=PC; if (CPU()>=0xFE || ( (memory[1]&3)>1 && pPC<0xE000 && (PC==0xEA31 || PC==0xEA81) ) ) {finished=1;break;} else CPUtime+=cycles; //RTS,RTI and IRQ player ROM return handling
     if ( (addr==0xDC05 || addr==0xDC04) && (memory[1]&3) && timermode[subtune] ) {
-     frame_sampleperiod = (memory[0xDC04] + memory[0xDC05]*256) / clock_ratio;  //dynamic CIA-setting (Galway/Rubicon workaround)
+     tune_sampleperiod = (memory[0xDC04] + memory[0xDC05]*256) / clock_ratio;  //dynamic CIA-setting (Galway/Rubicon workaround)
+     if (forced_hz <= 0.0) frame_sampleperiod = tune_sampleperiod;   //an explicit rate outranks the tune's
      if (!dynCIA) dynCIA=1;
     }
     if(storadd>=0xD420 && storadd<0xD800 && (memory[1]&3)) {  //CJ in the USA workaround (writing above $d420, except SID2/SID3)
@@ -557,7 +560,18 @@ void csid_set_addresses (unsigned int init_addr, unsigned int play_addr) {
  initaddr = init_addr; playaddr = playaddf = play_addr;
 }
 
-void csid_set_speed_hz (double hz) { forced_hz = hz; }
+void csid_set_speed_hz (double hz) {
+ forced_hz = hz;
+ if (hz > 0.0) frame_sampleperiod = samplerate / hz;
+ else if (tune_sampleperiod > 0.0) frame_sampleperiod = tune_sampleperiod;
+}
+
+/// Change chip model mid-tune. Only the model is touched: the number of chips
+/// and the output scaling belong to the tune, not to this choice.
+void csid_set_model (int model) {
+ int i;
+ for (i = 0; i < 3; i++) SID_model[i] = (model == 6581 || model == 8580) ? model : 8580;
+}
 
 void csid_set_sid (int model, unsigned int addr2, unsigned int addr3) {
  int i;

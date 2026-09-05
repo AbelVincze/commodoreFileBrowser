@@ -228,6 +228,11 @@ The addresses it needs are worked out three ways:
 * **By hand** — anything else, or `⇧Return` to override a wrong guess. The file
   is treated as a PRG, so its first two bytes give the load address.
 
+Speed and SID model take effect where they stand: the tune plays on rather than
+restarting from the beginning, and switching the speed back to *Tune* restores
+whatever rate the tune itself asked for. Choosing a different song does restart,
+since that means running init again.
+
 When the addresses are known the tune starts playing as the sheet opens; a file
 needing them typed in waits. The SID model and the oscilloscope settings are
 remembered from one tune to the next, and the remembered model takes precedence

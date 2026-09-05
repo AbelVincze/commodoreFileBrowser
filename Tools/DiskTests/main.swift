@@ -658,6 +658,55 @@ do {
 
     csid_scope_enable(0)
 
+    // Speed and chip model change without restarting the tune. csid_start
+    // zeroes the play-call counter, so a counter that keeps climbing across a
+    // change is proof that init was not re-run.
+    func startThreeVoiceTune(model: Int32) {
+        cSID_init(44100)
+        threeTune.payload.withUnsafeBufferPointer {
+            csid_load($0.baseAddress, Int32($0.count), UInt32(threeTune.loadAddress))
+        }
+        csid_set_addresses(UInt32(threeTune.initAddress), UInt32(threeTune.playAddress))
+        csid_set_sid(model, 0, 0); csid_set_speed_hz(0)
+        csid_start(0, threeTune.selector)
+    }
+    func renderSecond() {
+        var b = [Int16](repeating: 0, count: 44100)
+        b.withUnsafeMutableBufferPointer { csid_render($0.baseAddress, 44100) }
+    }
+
+    startThreeVoiceTune(model: 8580)
+    renderSecond()
+    let afterTuneRate = UInt(csid_play_call_count())
+    check(abs(Double(afterTuneRate) - 50.0) < 2, "1s at the tune's own rate: \(afterTuneRate) calls")
+
+    csid_set_speed_hz(200)          // live
+    renderSecond()
+    let after200 = UInt(csid_play_call_count())
+    check(after200 > afterTuneRate, "the counter kept climbing, so the tune did not restart")
+    check(abs(Double(after200 - afterTuneRate) - 200.0) < 6,
+          "the next second ran at 200 Hz: \(after200 - afterTuneRate) calls")
+
+    csid_set_speed_hz(0)            // back to the tune's own timing, still live
+    renderSecond()
+    let afterBack = UInt(csid_play_call_count())
+    check(abs(Double(afterBack - after200) - 50.0) < 2,
+          "back to tune timing: \(afterBack - after200) calls, and still no restart")
+
+    csid_set_model(6581)            // live
+    renderSecond()
+    check(UInt(csid_play_call_count()) > afterBack, "changing chip model did not restart either")
+
+    // And the model choice does reach the sound.
+    func fingerprintFromStart(model: Int32) -> Int {
+        startThreeVoiceTune(model: model)
+        var b = [Int16](repeating: 0, count: 44100)
+        b.withUnsafeMutableBufferPointer { csid_render($0.baseAddress, 44100) }
+        return b.reduce(0) { $0 &+ Int($1) &* Int($1) }
+    }
+    check(fingerprintFromStart(model: 8580) != fingerprintFromStart(model: 6581),
+          "8580 and 6581 render differently")
+
 } catch {
     print("  FAIL sid engine: \(error)"); failures += 1
 }

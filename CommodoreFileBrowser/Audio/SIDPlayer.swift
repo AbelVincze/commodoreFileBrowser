@@ -14,10 +14,13 @@ final class SIDPlayer: ObservableObject {
     @Published var errorMessage: String?
 
     /// Calls to the play routine per second. Zero keeps the tune's own timing.
-    @Published var speedHz: Double = 0 { didSet { restart() } }
-    /// Written to A, X and Y before init — how a subtune is chosen.
+    /// Applied where it stands, so the tune plays on.
+    @Published var speedHz: Double = 0 { didSet { apply { csid_set_speed_hz(speedHz) } } }
+    /// Written to A, X and Y before init — how a subtune is chosen. This one
+    /// does restart: picking a song means running init again.
     @Published var selector: UInt8 = 0 { didSet { restart() } }
-    @Published var sidModel: Int = 8580 { didSet { restart() } }
+    /// Also applied mid-tune.
+    @Published var sidModel: Int = 8580 { didSet { apply { csid_set_model(Int32(sidModel)) } } }
 
     private let engine = AVAudioEngine()
     private var source: AVAudioSourceNode?
@@ -77,6 +80,15 @@ final class SIDPlayer: ObservableObject {
     private func restart() {
         guard tune != nil else { return }
         configure()
+    }
+
+    /// A small engine change made under the same lock the render block uses,
+    /// so it cannot land halfway through a buffer.
+    private func apply(_ change: () -> Void) {
+        guard tune != nil else { return }
+        os_unfair_lock_lock(lock)
+        change()
+        os_unfair_lock_unlock(lock)
     }
 
     fileprivate func configure() {

@@ -114,7 +114,7 @@ struct BitmapPane: View {
 
     private var scrollingControls: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 section("Layout")
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                     ForEach(BitmapPreset.allCases) { preset in
@@ -239,32 +239,28 @@ struct BitmapPane: View {
         }
     }
 
-    @ViewBuilder
+    /// Always the same five rows, with a dash where there is no value, so the
+    /// column does not change height as the pointer comes and goes.
     private var readout: some View {
-        if let hovered, hovered < shown.count, let p = layout.position(ofByte: hovered) {
-            let absolute = displayOffset + hovered
-            VStack(alignment: .leading, spacing: 2) {
-                line("offset", String(format: "$%04X", absolute))
-                if baseAddress != 0 {
-                    line("address", String(format: "$%04X", (baseAddress + absolute) & 0xFFFF))
-                }
-                line("byte", String(format: "$%02X", shown[hovered]))
-                line("pixel", "\(p.x), \(p.y)")
-                line("block", "\(hovered / layout.blockStride)")
-            }
-        } else {
-            Text("Hover the bitmap")
-                .font(.system(size: 10))
-                .foregroundStyle(palette.color(.dim))
+        let index = hovered.flatMap { $0 < shown.count ? $0 : nil }
+        let absolute = index.map { displayOffset + $0 }
+        let pixel = index.flatMap { layout.position(ofByte: $0) }
+        return VStack(alignment: .leading, spacing: 2) {
+            line("offset", absolute.map { String(format: "$%04X", $0) })
+            line("address", absolute.map { String(format: "$%04X", (baseAddress + $0) & 0xFFFF) })
+            line("byte", index.map { String(format: "$%02X", shown[$0]) })
+            line("pixel", pixel.map { "\($0.x), \($0.y)" })
+            line("block", index.map { "\($0 / layout.blockStride)" })
         }
     }
 
-    private func line(_ name: String, _ value: String) -> some View {
+    private func line(_ name: String, _ value: String?) -> some View {
         HStack(spacing: 6) {
             Text(name)
                 .foregroundStyle(palette.color(.dim))
                 .frame(width: 52, alignment: .leading)
-            Text(value).foregroundStyle(palette.color(.text))
+            Text(value ?? "-")
+                .foregroundStyle(value == nil ? palette.color(.dim) : palette.color(.text))
         }
         .font(.system(size: 10, design: .monospaced))
     }

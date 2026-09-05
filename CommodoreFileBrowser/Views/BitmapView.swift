@@ -98,6 +98,21 @@ struct BitmapPane: View {
     // MARK: - Controls
 
     private var controls: some View {
+        VStack(spacing: 0) {
+            scrollingControls
+            Divider().overlay(palette.color(.border))
+            // Outside the scroll area: the readout grows and shrinks with the
+            // pointer, and the button must not be pushed out of the window.
+            Button("Save as PNG…", action: savePNG)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(palette.color(.window))
+    }
+
+    private var scrollingControls: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 section("Layout")
@@ -164,24 +179,26 @@ struct BitmapPane: View {
                 .controlSize(.small)
 
                 Divider().overlay(palette.color(.border))
-                Stepper(value: $layout.magnification, in: 1...16) {
-                    Text("Zoom  \(layout.magnification)x").font(.system(size: 11))
+                HStack(spacing: 8) {
+                    Stepper(value: $layout.magnification, in: 1...16) {
+                        Text("Zoom \(layout.magnification)x")
+                            .font(.system(size: 11))
+                            .fixedSize()
+                    }
+                    .fixedSize()
+                    Spacer(minLength: 0)
+                    Toggle("Invert", isOn: $layout.invert)
+                        .font(.system(size: 11))
+                        .fixedSize()
                 }
-                Toggle("Invert", isOn: $layout.invert).font(.system(size: 11))
 
                 Divider().overlay(palette.color(.border))
                 section("Pointer")
                 readout
-
-                Divider().overlay(palette.color(.border))
-                Button("Save as PNG…", action: savePNG)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 Spacer(minLength: 0)
             }
             .padding(12)
         }
-        .background(palette.color(.window))
     }
 
     private func step(_ delta: Int) {
@@ -228,7 +245,9 @@ struct BitmapPane: View {
             let absolute = displayOffset + hovered
             VStack(alignment: .leading, spacing: 2) {
                 line("offset", String(format: "$%04X", absolute))
-                line("address", String(format: "$%04X", (baseAddress + absolute) & 0xFFFF))
+                if baseAddress != 0 {
+                    line("address", String(format: "$%04X", (baseAddress + absolute) & 0xFFFF))
+                }
                 line("byte", String(format: "$%02X", shown[hovered]))
                 line("pixel", "\(p.x), \(p.y)")
                 line("block", "\(hovered / layout.blockStride)")

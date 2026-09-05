@@ -10,6 +10,10 @@ struct BasicPane: View {
 
     @State private var lines: [CommodoreBASIC.Line] = []
 
+    /// One step down from the panel size, matching the PETSCII column of the
+    /// hex dump so the two modes read at the same scale.
+    private var glyphZoom: Int { max(1, settings.zoom - 1) }
+
     var body: some View {
         Group {
             if lines.isEmpty {
@@ -33,7 +37,7 @@ struct BasicPane: View {
                             ForEach(lines) { line in
                                 PETSCIIText(petscii: line.petscii,
                                             color: palette.color(.text),
-                                            zoom: settings.zoom,
+                                            zoom: glyphZoom,
                                             font: settings.font)
                             }
                         }

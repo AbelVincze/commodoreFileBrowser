@@ -207,6 +207,8 @@ final class SettingsStore: ObservableObject {
     /// file instead, since it depends on what the file actually is.
     @Published var bitmapMagnification: Int { didSet { save() } }
     @Published var bitmapInvert: Bool { didSet { save() } }
+    /// Whether the viewer reads the first two bytes as a load address.
+    @Published var viewerUsesC64Offsets: Bool { didSet { save() } }
 
     private struct Stored: Codable {
         var appearance: AppearanceMode
@@ -220,6 +222,7 @@ final class SettingsStore: ObservableObject {
         var splitFraction: Double?
         var bitmapMagnification: Int?
         var bitmapInvert: Bool?
+        var viewerUsesC64Offsets: Bool?
     }
 
     private static let key = "theme.v1"
@@ -239,6 +242,7 @@ final class SettingsStore: ObservableObject {
         splitFraction = stored?.splitFraction ?? 0.5
         bitmapMagnification = stored?.bitmapMagnification ?? 2
         bitmapInvert = stored?.bitmapInvert ?? false
+        viewerUsesC64Offsets = stored?.viewerUsesC64Offsets ?? true
         loading = false
     }
 
@@ -247,7 +251,8 @@ final class SettingsStore: ObservableObject {
         let stored = Stored(appearance: appearance, light: light, dark: dark,
                             zoom: zoom, charSet: nil, font: font, showHiddenFiles: showHiddenFiles,
                             deleteToTrash: deleteToTrash, splitFraction: splitFraction,
-                            bitmapMagnification: bitmapMagnification, bitmapInvert: bitmapInvert)
+                            bitmapMagnification: bitmapMagnification, bitmapInvert: bitmapInvert,
+                            viewerUsesC64Offsets: viewerUsesC64Offsets)
         if let data = try? JSONEncoder().encode(stored) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

@@ -263,6 +263,18 @@ struct DiskHeaderSheet: View {
 
 // MARK: - Viewer
 
+enum ViewerMode: String, CaseIterable, Identifiable {
+    case hex, bitmap, basic
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .hex: return "Hex"
+        case .bitmap: return "Bitmap"
+        case .basic: return "Basic"
+        }
+    }
+}
+
 struct ViewerSheet: View {
     let content: ViewerContent
     let palette: Palette
@@ -271,8 +283,8 @@ struct ViewerSheet: View {
 
     /// C64 view: the first two bytes are read as the load address and become
     /// the first offset, and the dump starts at the third byte.
-    @State private var c64View = false
-    @State private var showBitmap: Bool
+    @State private var c64View: Bool
+    @State private var mode: ViewerMode
     /// Block geometry is seeded from the file's size, since it depends on what
     /// the file is; zoom and invert come from the remembered preferences.
     @State private var layout: BitmapLayout
@@ -285,7 +297,9 @@ struct ViewerSheet: View {
         self.palette = palette
         self.settings = settings
         self.onClose = onClose
-        _showBitmap = State(initialValue: content.startInBitmap)
+        _mode = State(initialValue: content.startInBitmap ? .bitmap : .hex)
+        // C64 offsets are the useful default here, and the choice is remembered.
+        _c64View = State(initialValue: settings.viewerUsesC64Offsets && content.data.count >= 2)
         // Only a PRG spends two bytes on a load address; anything else is all data.
         let payload = content.isPRG ? max(0, content.data.count - 2) : content.data.count
         var seed = BitmapPreset.suggested(forByteCount: payload).layout(basedOn: BitmapLayout())
@@ -369,24 +383,37 @@ struct ViewerSheet: View {
         VStack(spacing: 0) {
             header
             Divider().overlay(palette.color(.border))
-            if showBitmap {
+            switch mode {
+            case .hex:
+                hexDump
+            case .bitmap:
                 BitmapPane(bytes: [UInt8](content.data.dropFirst(c64View ? 2 : 0)),
                            baseAddress: c64View ? (loadAddress ?? 0) : 0,
                            fileName: content.title,
                            palette: palette,
                            layout: $layout,
                            displayOffset: $displayOffset)
-            } else {
-                hexDump
+            case .basic:
+                // A listing always starts after the load address, so the
+                // Raw/C64 switch has nothing to say about it.
+                BasicPane(bytes: [UInt8](content.data), palette: palette, settings: settings)
             }
         }
-        .frame(width: showBitmap ? 900 : sheetWidth,
-               height: showBitmap ? 620 : 520)
+        .frame(width: sheetSize.width, height: sheetSize.height)
         .background(palette.color(.window))
         .onChange(of: layout) { _, new in
             // Only the display preferences are remembered between files.
             settings.bitmapMagnification = new.magnification
             settings.bitmapInvert = new.invert
+        }
+        .onChange(of: c64View) { _, new in settings.viewerUsesC64Offsets = new }
+    }
+
+    private var sheetSize: CGSize {
+        switch mode {
+        case .hex: return CGSize(width: sheetWidth, height: 520)
+        case .bitmap: return CGSize(width: 900, height: 620)
+        case .basic: return CGSize(width: 720, height: 620)
         }
     }
 
@@ -427,14 +454,13 @@ struct ViewerSheet: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
-                Picker("", selection: $showBitmap) {
-                    Text("Hex").tag(false)
-                    Text("Bitmap").tag(true)
+                Picker("", selection: $mode) {
+                    ForEach(ViewerMode.allCases) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 116)
-                if loadAddress != nil {
+                .frame(width: 176)
+                if loadAddress != nil, mode != .basic {
                     Picker("", selection: $c64View) {
                         Text("Raw").tag(false)
                         Text("C64").tag(true)
@@ -478,6 +504,7 @@ struct HelpSheet: View {
         ("F2", "New disk image (D64 / D71 / D81)"),
         ("F3", "View the file under the cursor"),
         ("⇧F3", "View it as a bitmap"),
+        ("", "The viewer also lists tokenised BASIC in the Commodore font"),
         ("F4", "Edit the disk header of the open image"),
         ("F5", "Copy to the other panel"),
         ("F6", "Move to the other panel"),

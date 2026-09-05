@@ -149,14 +149,28 @@ appear in the footer of the active panel.
 
 ## The viewer
 
-`F3` opens a file in a hex dump with a PETSCII column; `⇧F3` opens the same
-modal already in bitmap mode, and a Hex/Bitmap switch moves between them.
+`F3` opens a file in the viewer; `⇧F3` opens it straight into the bitmap. A
+Hex / Bitmap / Basic switch moves between the three modes.
 
-A **Raw/C64** switch decides what the first two bytes mean. Raw starts the
-offsets at `0000` and treats those bytes as data. C64 reads them as the load
-address, starts the offsets there and dumps from the third byte. Rows always
-begin on a `$10` boundary, so a load address of `$0801` starts at `0800` with
-one blank slot and every column stays under one address digit.
+A **Raw/C64** switch decides what the first two bytes mean. C64, the default,
+reads them as the load address, starts the offsets there and dumps from the
+third byte; Raw starts at `0000` and treats them as data. The choice is
+remembered. Rows always begin on a `$10` boundary, so a load address of `$0801`
+starts at `0800` with one blank slot and every column stays under one address
+digit.
+
+### Basic listing
+
+A tokenised BASIC program is listed the way the machine prints it, in the
+Commodore character set. Keywords are expanded outside quotes and left as raw
+bytes inside them, so control codes in strings still show as the reverse-video
+characters a real `LIST` puts there, and no space appears where the program
+never stored one — `IFS=34THENL$=` lists exactly like that.
+
+The token table is BASIC V2 (`$80`-`$CB`), which the PET, VIC-20 and C64 share.
+BASIC 4.0 and 7.0 add keywords above `$CB`; those pass through as PETSCII rather
+than being expanded. A file that does not begin with a tokenised line says so
+instead of showing noise.
 
 ### Bitmap view
 

@@ -395,5 +395,58 @@ do {
     print("  FAIL bitmap: \(error)"); failures += 1
 }
 
+// --- BASIC detokeniser ------------------------------------------------------
+print("\n=== basic listing")
+do {
+    // 10 PRINT "HELLO"
+    // 20 GOTO 10
+    var prg: [UInt8] = [0x01, 0x08]                    // load address $0801
+    prg += [0x0E, 0x08, 0x0A, 0x00]                    // link, line 10
+    prg += [0x99, 0x20, 0x22] + Array("HELLO".utf8) + [0x22, 0x00]
+    prg += [0x16, 0x08, 0x14, 0x00]                    // link, line 20
+    prg += [0x89, 0x31, 0x30, 0x00]                    // GOTO 10
+    prg += [0x00, 0x00]                                // end of program
+
+    let lines = CommodoreBASIC.listing(prg)
+    check(lines.count == 2, "two lines parsed")
+    check(lines.first?.number == 10 && lines.last?.number == 20, "line numbers 10 and 20")
+    check(PETSCII.ascii(lines[0].text) == "PRINT \"HELLO\"", "line 10 detokenised: \(PETSCII.ascii(lines[0].text))")
+    // No space: none was stored, and a real C64 lists it exactly this way.
+    check(PETSCII.ascii(lines[1].text) == "GOTO10", "line 20 detokenised: \(PETSCII.ascii(lines[1].text))")
+    check(PETSCII.ascii(lines[0].petscii) == "10 PRINT \"HELLO\"", "the listing line carries its number")
+
+    // A token byte inside quotes is a character, not a keyword.
+    var quoted: [UInt8] = [0x01, 0x08]
+    quoted += [0x0A, 0x08, 0x0A, 0x00]
+    quoted += [0x99, 0x22, 0x99, 0x22, 0x00]           // PRINT "<$99>"
+    quoted += [0x00, 0x00]
+    let q = CommodoreBASIC.listing(quoted)
+    check(q.count == 1 && q[0].text == [0x50, 0x52, 0x49, 0x4E, 0x54, 0x22, 0x99, 0x22],
+          "a token inside quotes stays a raw byte")
+
+    // Every keyword resolves, and the table is the right length.
+    check(CommodoreBASIC.tokens.count == 76, "76 tokens, $80 to $CB")
+    check(CommodoreBASIC.tokens[0x99 - 0x80] == "PRINT", "$99 is PRINT")
+    check(CommodoreBASIC.tokens[0x9E - 0x80] == "SYS", "$9E is SYS")
+    check(CommodoreBASIC.tokens[0xCB - 0x80] == "GO", "$CB is GO")
+
+    // Junk must not hang or crash the parser.
+    check(CommodoreBASIC.listing([UInt8](repeating: 0xAA, count: 5000)).count <= 20_000,
+          "random data terminates")
+    check(CommodoreBASIC.listing([]).isEmpty, "empty data gives no lines")
+
+    // A real BASIC loader off one of the sample disks.
+    let img = try CBMDiskImage(url: URL(fileURLWithPath: "sample_images/cbmcmd23.d64"))
+    if let entry = img.entries.first(where: { $0.displayName == "LOADCBMCMD" }) {
+        let real = CommodoreBASIC.listing([UInt8](try img.read(entry)))
+        check(!real.isEmpty, "LOADCBMCMD lists \(real.count) line(s)")
+        for line in real.prefix(3) {
+            print("      \(PETSCII.ascii(line.petscii))")
+        }
+    }
+} catch {
+    print("  FAIL basic: \(error)"); failures += 1
+}
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) CHECK(S) FAILED")
 exit(failures == 0 ? 0 : 1)

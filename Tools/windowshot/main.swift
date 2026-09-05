@@ -178,19 +178,15 @@ DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
         capture()
         // Now open the viewer on a real PRG and capture the sheet.
-        // A synthetic sprite bank: 80 slots of 64 bytes, alternating solid and
-        // empty, each using only its first 63 bytes. With the align right this
-        // is four clean rectangles; with it wrong they smear across each other.
-        var bank = [UInt8]()
-        for sprite in 0..<80 {
-            // Alternate solid and empty so any drift shows up as a smear.
-            bank.append(contentsOf: [UInt8](repeating: sprite % 2 == 0 ? 0xFF : 0x00, count: 63))
-            bank.append(0xFF)   // the padding byte, which must never be drawn
+        // A real BASIC loader off one of the sample disks.
+        if let image = model.right.image,
+           let entry = image.entries.first(where: { $0.displayName == "LOADCBMCMD" }),
+           let data = try? image.read(entry) {
+            model.sheet = .viewer(ViewerContent(title: entry.displayName, data: data,
+                                                isPRG: true, startInBitmap: false))
         }
-        model.sheet = .viewer(ViewerContent(title: "sprites", data: Data(bank),
-                                            isPRG: false, startInBitmap: true))
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            captureSheet("sprites")
+            captureSheet("basic")
             exit(0)
         }
     }

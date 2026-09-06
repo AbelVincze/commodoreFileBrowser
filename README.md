@@ -85,7 +85,7 @@ Copy and move work in all four directions:
 * **Mac → image** — the file is written into the image with a legal PETSCII
   name. A `.prg` keeps its two byte load address; the file type follows the
   extension (`.prg`, `.seq`, `.usr`, `.rel`) and defaults to `PRG`.
-* **image → Mac** — the file lands as `NAME.prg`, with the load address
+* **image → Mac** — the file lands as `name.prg`, with the load address
   restored at the front so it can be loaded again later.
 * **Mac → Mac** — including whole folders.
 * **image → image** — between two open images, in either direction.
@@ -328,6 +328,30 @@ thirteen roles the browser draws with — separately for the light and the dark
 palette. *Display* picks the character ROM (Commodore 64 or PET) and switches
 between the upper case/graphics and lower case/upper case halves of it. The
 character cell size is fixed at 16 px, which the panel layout is built around.
+
+### Upper and lower case
+
+A Commodore letter comes in two forms, and which one is stored decides what it
+draws in each half of the ROM. Unshifted letters, `$41`-`$5A`, are what the
+machine types by default: capitals in the upper case / graphics set, lower case
+in the other. Shifted letters, `$C1`-`$DA`, are graphics in the first set and
+capitals in the second.
+
+So case here is not decoration, it picks the form. **Names are written in lower
+case**: `new disk` stores the unshifted letters and reads `NEW DISK` in the set
+the machine boots into, and `new disk` once the character set is switched.
+Capitals ask for the shifted form, which is what lets a name be given in mixed
+case — `NewFile` reads exactly as written in the lower case set, at the price of
+the `N` and the `F` being graphics in the other, which is what a real machine
+does too.
+
+Everything the browser spells for itself follows the same rule and is written in
+lower case in the source: the file types on a directory row, the BASIC keywords
+a listing expands, the disk name a new image is given. Reading back is the
+inverse, so a name taken out of a directory and written straight back is the
+same bytes — which is why a name a Commodore typed comes out lower case on the
+Mac. Those really are its unshifted letters, and spelling them back in capitals
+would store the graphics forms instead.
 
 ### Character ROMs
 

@@ -25,30 +25,47 @@ enum PETSCII {
     static func screenCodes(_ bytes: [UInt8]) -> [UInt8] { bytes.map(screenCode) }
 
     /// Screen codes for a plain ASCII string (used for the chrome we draw in
-    /// PETSCII: block counts, file types, "BLOCKS FREE" and so on).
+    /// PETSCII: block counts, file types, "blocks free" and so on — spelled in
+    /// lower case, since those are the letters the drive itself prints).
     static func screenCodes(ascii: String) -> [UInt8] {
         petscii(fromASCII: ascii).map(screenCode)
     }
 
-    /// ASCII -> PETSCII, using the upper-case/graphics character set where
-    /// letters live at $41-$5A (this is what CBM DOS stores in a directory).
+    /// ASCII -> PETSCII, keeping the case as a Commodore means it.
+    ///
+    /// Letters come in two forms. Unshifted, $41-$5A, are the ones a machine
+    /// types by default: capitals in the upper case / graphics set, lower case
+    /// in the other. Shifted, $C1-$DA, are graphics in the first set and
+    /// capitals in the second.
+    ///
+    /// So lower case here is the ordinary letter — write "new disk" and it
+    /// reads NEW DISK in the set the machine boots into, and "new disk" once
+    /// the character set is switched. Upper case here asks for the shifted
+    /// form, which is what makes "NewFile" come out as written in the lower
+    /// case set, at the price of the N and the F being graphics in the other.
     static func petscii(fromASCII s: String) -> [UInt8] {
         s.unicodeScalars.map { u -> UInt8 in
             switch u {
-            case "a"..."z": return UInt8(u.value - 0x20)   // fold to upper case
-            case "A"..."Z": return UInt8(u.value)
+            case "a"..."z": return UInt8(u.value - 0x20)   // unshifted, $41-$5A
+            case "A"..."Z": return UInt8(u.value + 0x80)   // shifted, $C1-$DA
             default: return u.value < 0x80 ? UInt8(u.value) : 0x3F // '?'
             }
         }
     }
 
     /// PETSCII -> a readable ASCII rendering, for host file names and dialogs.
+    ///
+    /// The inverse of the above, so a name read out of a directory and written
+    /// straight back is the same bytes: unshifted letters come back lower case,
+    /// shifted ones upper case. That is why a name typed on a Commodore reads
+    /// lower case here — those really are the unshifted letters, and spelling
+    /// them back in capitals would store the graphics forms instead.
     static func ascii(_ bytes: [UInt8]) -> String {
         var out = ""
         for c in bytes {
             switch c {
             case 0x20...0x3F: out.append(Character(UnicodeScalar(c)))
-            case 0x41...0x5A: out.append(Character(UnicodeScalar(c)))
+            case 0x41...0x5A: out.append(Character(UnicodeScalar(c &+ 0x20)))
             case 0x61...0x7A: out.append(Character(UnicodeScalar(c &- 0x20)))
             case 0xC1...0xDA: out.append(Character(UnicodeScalar(c &- 0x80)))
             case 0x5B...0x5E: out.append(Character(UnicodeScalar(c)))
@@ -83,13 +100,13 @@ enum PETSCII {
         return b
     }
 
-    /// A file-system safe name for a CBM file, e.g. `MY FILE` -> `MY FILE.prg`.
+    /// A file-system safe name for a CBM file, e.g. `my file` -> `my file.prg`.
     static func hostFileName(_ bytes: [UInt8], type: CBMFileType) -> String {
         var name = ascii(trimPadding(bytes))
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespaces)
-        if name.isEmpty { name = "UNNAMED" }
+        if name.isEmpty { name = "unnamed" }
         return "\(name).\(type.fileExtension)"
     }
 }

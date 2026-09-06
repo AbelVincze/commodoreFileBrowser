@@ -334,7 +334,7 @@ final class PanelModel: ObservableObject {
         line += [0x22] + entry.name + [0x22]
         line += [UInt8](repeating: 0x20, count: max(0, 16 - entry.name.count))
         line += [0x20, entry.isSplat ? 0x2A : 0x20]
-        line += PETSCII.petscii(fromASCII: entry.type.name)
+        line += PETSCII.petscii(fromASCII: entry.type.name.lowercased())
         line += [entry.isLocked ? 0x3C : 0x20]
         return line
     }

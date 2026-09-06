@@ -9,16 +9,18 @@ import Foundation
 enum CommodoreBASIC {
 
     /// BASIC V2 keywords, $80 through $CB. The PET, VIC-20 and C64 share these.
+    /// Spelled in lower case because that is what the unshifted letters a drive
+    /// prints are: a listing reads PRINT in the set the machine boots into.
     /// BASIC 4.0 and 7.0 add more above $CB; those pass through as raw PETSCII.
     static let tokens: [String] = [
-        "END", "FOR", "NEXT", "DATA", "INPUT#", "INPUT", "DIM", "READ", "LET", "GOTO",
-        "RUN", "IF", "RESTORE", "GOSUB", "RETURN", "REM", "STOP", "ON", "WAIT", "LOAD",
-        "SAVE", "VERIFY", "DEF", "POKE", "PRINT#", "PRINT", "CONT", "LIST", "CLR", "CMD",
-        "SYS", "OPEN", "CLOSE", "GET", "NEW", "TAB(", "TO", "FN", "SPC(", "THEN",
-        "NOT", "STEP", "+", "-", "*", "/", "^", "AND", "OR", ">",
-        "=", "<", "SGN", "INT", "ABS", "USR", "FRE", "POS", "SQR", "RND",
-        "LOG", "EXP", "COS", "SIN", "TAN", "ATN", "PEEK", "LEN", "STR$", "VAL",
-        "ASC", "CHR$", "LEFT$", "RIGHT$", "MID$", "GO",
+        "end", "for", "next", "data", "input#", "input", "dim", "read", "let", "goto",
+        "run", "if", "restore", "gosub", "return", "rem", "stop", "on", "wait", "load",
+        "save", "verify", "def", "poke", "print#", "print", "cont", "list", "clr", "cmd",
+        "sys", "open", "close", "get", "new", "tab(", "to", "fn", "spc(", "then",
+        "not", "step", "+", "-", "*", "/", "^", "and", "or", ">",
+        "=", "<", "sgn", "int", "abs", "usr", "fre", "pos", "sqr", "rnd",
+        "log", "exp", "cos", "sin", "tan", "atn", "peek", "len", "str$", "val",
+        "asc", "chr$", "left$", "right$", "mid$", "go",
     ]
 
     struct Line: Identifiable {

@@ -50,20 +50,20 @@ for kind in CBMDiskImage.BlankFormat.allCases {
     try? FileManager.default.removeItem(atPath: path)
     let url = URL(fileURLWithPath: path)
     do {
-        try CBMDiskImage.createBlank(kind, name: PETSCII.petscii(fromASCII: "TEST DISK"),
+        try CBMDiskImage.createBlank(kind, name: PETSCII.petscii(fromASCII: "test disk"),
                                      id: PETSCII.petscii(fromASCII: "01"), at: url)
         let img = try CBMDiskImage(url: url)
         let expected = [CBMDiskImage.BlankFormat.d64: 664, .d71: 1328, .d81: 3160][kind]!
         check(img.blocksFree == expected, "\(kind.rawValue) fresh format: \(img.blocksFree) blocks free (want \(expected))")
         check(img.entries.isEmpty, "\(kind.rawValue) fresh directory is empty")
-        check(PETSCII.ascii(PETSCII.trimPadding(img.diskName)) == "TEST DISK", "\(kind.rawValue) disk name")
+        check(PETSCII.ascii(PETSCII.trimPadding(img.diskName)) == "test disk", "\(kind.rawValue) disk name")
 
         // Write a spread of sizes, including ones that cross a block boundary.
         var written: [String: Data] = [:]
         for (i, size) in [1, 253, 254, 255, 508, 20000].enumerated() {
             var payload = Data([0x01, 0x08])
             payload.append(contentsOf: (0..<size).map { UInt8(($0 &* 7 &+ i) & 0xFF) })
-            let name = PETSCII.cbmName(fromASCII: "FILE \(i)")
+            let name = PETSCII.cbmName(fromASCII: "file \(i)")
             try img.write(name: name, type: .prg, data: payload)
             written[PETSCII.ascii(name)] = payload
         }
@@ -81,19 +81,19 @@ for kind in CBMDiskImage.BlankFormat.allCases {
         check(reread.blocksFree == expected, "\(kind.rawValue) all blocks reclaimed after delete (\(reread.blocksFree))")
 
         // Rename, lock, rearrange.
-        try reread.write(name: PETSCII.cbmName(fromASCII: "AAA"), type: .prg, data: Data([0x01, 0x08, 9, 9]))
-        try reread.write(name: PETSCII.cbmName(fromASCII: "BBB"), type: .seq, data: Data([1, 2, 3]))
-        try reread.rename(reread.entries[0], to: PETSCII.cbmName(fromASCII: "RENAMED"))
-        check(reread.entries[0].displayName == "RENAMED", "\(kind.rawValue) rename")
+        try reread.write(name: PETSCII.cbmName(fromASCII: "aaa"), type: .prg, data: Data([0x01, 0x08, 9, 9]))
+        try reread.write(name: PETSCII.cbmName(fromASCII: "bbb"), type: .seq, data: Data([1, 2, 3]))
+        try reread.rename(reread.entries[0], to: PETSCII.cbmName(fromASCII: "renamed"))
+        check(reread.entries[0].displayName == "renamed", "\(kind.rawValue) rename")
         try reread.moveEntry(reread.entries[0], by: 1)
-        check(reread.entries[0].displayName == "BBB" && reread.entries[1].displayName == "RENAMED",
+        check(reread.entries[0].displayName == "bbb" && reread.entries[1].displayName == "renamed",
               "\(kind.rawValue) reorder")
         try reread.addDecorativeEntry(name: PETSCII.cbmName(fromASCII: "---------"), after: reread.entries[0])
         check(reread.entries.count == 3 && reread.entries[1].type == .del, "\(kind.rawValue) decorative DEL entry")
-        try reread.setDiskHeader(name: PETSCII.cbmName(fromASCII: "NEW NAME"), id: PETSCII.petscii(fromASCII: "2B"))
+        try reread.setDiskHeader(name: PETSCII.cbmName(fromASCII: "new name"), id: PETSCII.petscii(fromASCII: "2B"))
         try reread.save()
         let third = try CBMDiskImage(url: url)
-        check(PETSCII.ascii(PETSCII.trimPadding(third.diskName)) == "NEW NAME", "\(kind.rawValue) header edit persists")
+        check(PETSCII.ascii(PETSCII.trimPadding(third.diskName)) == "new name", "\(kind.rawValue) header edit persists")
         check(third.entries.count == 3, "\(kind.rawValue) 3 entries persist")
     } catch {
         print("  FAIL \(kind.rawValue): \(error)")
@@ -107,12 +107,12 @@ do {
     let path = "\(scratch)/full.d64"
     try? FileManager.default.removeItem(atPath: path)
     let url = URL(fileURLWithPath: path)
-    try CBMDiskImage.createBlank(.d64, name: PETSCII.petscii(fromASCII: "FULL"), id: [0x30, 0x31], at: url)
+    try CBMDiskImage.createBlank(.d64, name: PETSCII.petscii(fromASCII: "full"), id: [0x30, 0x31], at: url)
     let img = try CBMDiskImage(url: url)
     var count = 0
     while true {
         do {
-            try img.write(name: PETSCII.cbmName(fromASCII: "F\(count)"), type: .prg,
+            try img.write(name: PETSCII.cbmName(fromASCII: "f\(count)"), type: .prg,
                           data: Data(repeating: 0x41, count: 2540))
             count += 1
         } catch { break }
@@ -196,20 +196,20 @@ do {
     // Normal exit: commit.
     panel = openPanel()
     try panel.image!.delete(panel.image!.entries[0])
-    try panel.image!.write(name: PETSCII.cbmName(fromASCII: "ADDED"), type: .prg, data: Data([0x01, 0x08, 1, 2, 3]))
+    try panel.image!.write(name: PETSCII.cbmName(fromASCII: "added"), type: .prg, data: Data([0x01, 0x08, 1, 2, 3]))
     panel.goUp(keepChanges: true)
     let saved = try CBMDiskImage(url: url)
     check(saved.entries.count == originalCount, "walking up to the parent wrote the edits")
-    check(saved.entries.contains { $0.displayName == "ADDED" }, "the added file survived the save")
+    check(saved.entries.contains { $0.displayName == "added" }, "the added file survived the save")
 
     // A rebuild after an operation must not re-read the untouched file.
     panel = openPanel()
-    try panel.image!.write(name: PETSCII.cbmName(fromASCII: "PENDING"), type: .prg, data: Data([0x01, 0x08, 9]))
+    try panel.image!.write(name: PETSCII.cbmName(fromASCII: "pending"), type: .prg, data: Data([0x01, 0x08, 9]))
     panel.refresh()
     check(panel.hasUnsavedChanges, "refresh keeps the pending edits")
-    check(panel.items.contains { $0.title == "PENDING" }, "refresh redraws them from memory")
+    check(panel.items.contains { $0.title == "pending" }, "refresh redraws them from memory")
     panel.goUp(keepChanges: false)
-    check(try !CBMDiskImage(url: url).entries.contains { $0.displayName == "PENDING" },
+    check(try !CBMDiskImage(url: url).entries.contains { $0.displayName == "pending" },
           "and they are still discardable afterwards")
 } catch {
     print("  FAIL deferred save: \(error)"); failures += 1
@@ -411,10 +411,10 @@ do {
     let lines = CommodoreBASIC.listing(prg)
     check(lines.count == 2, "two lines parsed")
     check(lines.first?.number == 10 && lines.last?.number == 20, "line numbers 10 and 20")
-    check(PETSCII.ascii(lines[0].text) == "PRINT \"HELLO\"", "line 10 detokenised: \(PETSCII.ascii(lines[0].text))")
+    check(PETSCII.ascii(lines[0].text) == "print \"hello\"", "line 10 detokenised: \(PETSCII.ascii(lines[0].text))")
     // No space: none was stored, and a real C64 lists it exactly this way.
-    check(PETSCII.ascii(lines[1].text) == "GOTO10", "line 20 detokenised: \(PETSCII.ascii(lines[1].text))")
-    check(PETSCII.ascii(lines[0].petscii) == "10 PRINT \"HELLO\"", "the listing line carries its number")
+    check(PETSCII.ascii(lines[1].text) == "goto10", "line 20 detokenised: \(PETSCII.ascii(lines[1].text))")
+    check(PETSCII.ascii(lines[0].petscii) == "10 print \"hello\"", "the listing line carries its number")
 
     // A token byte inside quotes is a character, not a keyword.
     var quoted: [UInt8] = [0x01, 0x08]
@@ -427,9 +427,9 @@ do {
 
     // Every keyword resolves, and the table is the right length.
     check(CommodoreBASIC.tokens.count == 76, "76 tokens, $80 to $CB")
-    check(CommodoreBASIC.tokens[0x99 - 0x80] == "PRINT", "$99 is PRINT")
-    check(CommodoreBASIC.tokens[0x9E - 0x80] == "SYS", "$9E is SYS")
-    check(CommodoreBASIC.tokens[0xCB - 0x80] == "GO", "$CB is GO")
+    check(CommodoreBASIC.tokens[0x99 - 0x80] == "print", "$99 is PRINT")
+    check(CommodoreBASIC.tokens[0x9E - 0x80] == "sys", "$9E is SYS")
+    check(CommodoreBASIC.tokens[0xCB - 0x80] == "go", "$CB is GO")
 
     // Junk must not hang or crash the parser.
     check(CommodoreBASIC.listing([UInt8](repeating: 0xAA, count: 5000)).count <= 20_000,
@@ -500,7 +500,7 @@ do {
     // A real tune off a disk loads with its address from the PRG header.
     let img = try CBMDiskImage(url: URL(fileURLWithPath:
         "/Users/macc/Emulation/c64/SD_backup/macc/maccdisks/INTROMUSICS_007.D64"))
-    if let entry = img.entries.first(where: { $0.displayName.hasPrefix("Z10 ") }) {
+    if let entry = img.entries.first(where: { $0.displayName.hasPrefix("z10 ") }) {
         let bytes = [UInt8](try img.read(entry))
         if let tune = SIDTuneLoader.detect(name: entry.displayName, data: bytes) {
             check(tune.source == .naming, "Z10 detected from its name")
@@ -541,7 +541,7 @@ print("\n=== sid engine")
 do {
     let img = try CBMDiskImage(url: URL(fileURLWithPath:
         "/Users/macc/Emulation/c64/SD_backup/macc/maccdisks/INTROMUSICS_007.D64"))
-    guard let entry = img.entries.first(where: { $0.displayName.hasPrefix("Z10 ") }),
+    guard let entry = img.entries.first(where: { $0.displayName.hasPrefix("z10 ") }),
           let tune = SIDTuneLoader.detect(name: entry.displayName,
                                           data: [UInt8](try img.read(entry)))
     else { throw DiskImageError.fileNotFound }
@@ -618,7 +618,7 @@ do {
 
     // Per-voice capture for the oscilloscope. Many of these intro tunes use a
     // single voice, so check against one that is known to use all three.
-    guard let three = img.entries.first(where: { $0.displayName.hasPrefix("ZJ0 ") }),
+    guard let three = img.entries.first(where: { $0.displayName.hasPrefix("zj0 ") }),
           let threeTune = SIDTuneLoader.detect(name: three.displayName,
                                                data: [UInt8](try img.read(three)))
     else { throw DiskImageError.fileNotFound }
@@ -657,6 +657,27 @@ do {
     check((3..<9).allMatch { voicePeak[$0] == 0 }, "voices of absent chips stay silent")
 
     csid_scope_enable(0)
+
+    // Case decides which form of a letter is stored: lower case the unshifted
+    // one a machine types by default, upper case the shifted one. Both survive
+    // the round trip, which is what lets a name be given in mixed case.
+    do {
+        check(PETSCII.petscii(fromASCII: "new disk")
+              == [0x4E, 0x45, 0x57, 0x20, 0x44, 0x49, 0x53, 0x4B],
+              "lower case stores the unshifted letters")
+        check(PETSCII.petscii(fromASCII: "NEW") == [0xCE, 0xC5, 0xD7],
+              "upper case stores the shifted ones")
+        for name in ["new disk", "NewFile", "NEWFILE", "z10 i1000 p1003"] {
+            check(PETSCII.ascii(PETSCII.petscii(fromASCII: name)) == name,
+                  "\"\(name)\" survives the round trip")
+        }
+        // Unshifted letters are the same glyph indices in both halves of the
+        // ROM, which is what makes one spelling read either way.
+        check(PETSCII.screenCodes(ascii: "new") == [0x0E, 0x05, 0x17],
+              "and draw from the letter range of whichever set is on")
+        check(PETSCII.cbmName(fromASCII: "new disk").allSatisfy { $0 != 0xA0 },
+              "no name byte collides with the padding")
+    }
 
     // The picture an export writes. Odd dimensions are the failure that matters:
     // H.264 will not take them.

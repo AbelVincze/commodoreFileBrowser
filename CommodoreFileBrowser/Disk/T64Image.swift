@@ -25,7 +25,7 @@ final class T64Image: DiskImage {
     }
     var integrityNote: String? { nil }
     var diskName: [UInt8] { PETSCII.padded16(PETSCII.trimPadding(tapeName)) }
-    var diskID: [UInt8] { PETSCII.petscii(fromASCII: "T6 4T") }
+    var diskID: [UInt8] { PETSCII.petscii(fromASCII: "t6 4t") }
 
     var entries: [CBMEntry] {
         records.enumerated().map { index, r in
@@ -173,7 +173,7 @@ final class T64Image: DiskImage {
         out[34] = UInt8(maxEntries & 0xFF); out[35] = UInt8(maxEntries >> 8)
         out[36] = UInt8(records.count & 0xFF); out[37] = UInt8(records.count >> 8)
         var description = PETSCII.trimPadding(tapeName)
-        if description.isEmpty { description = PETSCII.petscii(fromASCII: "TAPE") }
+        if description.isEmpty { description = PETSCII.petscii(fromASCII: "tape") }
         for i in 0..<24 { out[40 + i] = i < description.count ? description[i] : 0x20 }
 
         var body = Data()

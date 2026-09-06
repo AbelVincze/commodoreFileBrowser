@@ -81,11 +81,11 @@ private struct DisplaySettings: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Preview").font(.system(size: 11, weight: .medium))
                 VStack(alignment: .leading, spacing: 2) {
-                    PETSCIIText(petscii: PETSCII.petscii(fromASCII: "0 \"COMMODORE FILES\" 01 2A"),
+                    PETSCIIText(petscii: PETSCII.petscii(fromASCII: "0 \"commodore files\" 01 2a"),
                                 color: .primary, zoom: settings.zoom, font: settings.font, reverse: true)
-                    PETSCIIText(petscii: PETSCII.petscii(fromASCII: "12   \"HELLO WORLD\"     PRG"),
+                    PETSCIIText(petscii: PETSCII.petscii(fromASCII: "12   \"hello world\"     prg"),
                                 color: .primary, zoom: settings.zoom, font: settings.font)
-                    PETSCIIText(petscii: PETSCII.petscii(fromASCII: "664 BLOCKS FREE."),
+                    PETSCIIText(petscii: PETSCII.petscii(fromASCII: "664 blocks free."),
                                 color: .primary, zoom: settings.zoom, font: settings.font)
                 }
                 .padding(8)

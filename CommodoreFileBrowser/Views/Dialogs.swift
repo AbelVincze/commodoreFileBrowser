@@ -189,8 +189,8 @@ struct NewImageSheet: View {
     let onConfirm: (CBMDiskImage.BlankFormat, String, String, String) -> Void
 
     @State private var kind: CBMDiskImage.BlankFormat = .d64
-    @State private var fileName = "NEW"
-    @State private var diskName = "NEW DISK"
+    @State private var fileName = "new"
+    @State private var diskName = "new disk"
     @State private var diskID = "01"
     @FocusState private var focused: Bool
 
@@ -210,12 +210,12 @@ struct NewImageSheet: View {
                     .font(.system(size: 10))
                     .foregroundStyle(palette.color(.dim))
                 LabeledContent("File name") {
-                    TextField("NEW", text: $fileName)
+                    TextField("new", text: $fileName)
                         .textFieldStyle(.roundedBorder)
                         .focused($focused)
                 }
                 LabeledContent("Disk name") {
-                    TextField("NEW DISK", text: $diskName).textFieldStyle(.roundedBorder)
+                    TextField("new disk", text: $diskName).textFieldStyle(.roundedBorder)
                 }
                 LabeledContent("Disk ID") {
                     TextField("01", text: $diskID).textFieldStyle(.roundedBorder).frame(width: 60)

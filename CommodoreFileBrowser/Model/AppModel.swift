@@ -706,6 +706,49 @@ final class AppModel: ObservableObject {
         } catch { fail(error) }
     }
 
+    // MARK: - Unpacking an archive
+
+    /// True for a row, or for the panel itself, that is a DMS archive.
+    func isArchive(_ item: PanelItem?) -> Bool {
+        if let url = item?.url, item?.kind == .diskImage {
+            return url.pathExtension.lowercased() == "dms"
+        }
+        return false
+    }
+
+    var isInsideArchive: Bool {
+        activePanel.location.url?.pathExtension.lowercased() == "dms"
+    }
+
+    /// Write the disk an archive holds out as an ADF, into the folder on the
+    /// other side — the same place a copy would go.
+    func unpackArchive(_ item: PanelItem? = nil) {
+        let source: URL?
+        if let item, item.kind == .diskImage { source = item.url }
+        else if isInsideArchive { source = activePanel.location.url }
+        else if let current = activePanel.currentItem, current.kind == .diskImage { source = current.url }
+        else { source = nil }
+
+        guard let source, source.pathExtension.lowercased() == "dms" else {
+            alertMessage = "Choose a DMS archive to unpack."
+            return
+        }
+        guard case .directory(let destination) = inactivePanel.location else {
+            alertMessage = "Open a folder on the other side to unpack the archive into."
+            return
+        }
+        let target = destination.appendingPathComponent(
+            source.deletingPathExtension().lastPathComponent + ".adf")
+        do {
+            let image = try ADFImage.unpackedImage(at: source)
+            try image.write(to: target, options: .withoutOverwriting)
+            inactivePanel.refresh()
+            statusMessage = "Unpacked \(target.lastPathComponent)"
+        } catch CocoaError.fileWriteFileExists {
+            alertMessage = "\"\(target.lastPathComponent)\" already exists in that folder."
+        } catch { fail(error) }
+    }
+
     // MARK: - Viewer
 
     func beginView(bitmap: Bool = false) {

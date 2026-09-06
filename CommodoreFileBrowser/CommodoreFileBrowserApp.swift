@@ -46,6 +46,8 @@ struct CommodoreFileBrowserApp: App {
             Button("Show in Finder") { model.revealInFinder() }
                 .keyboardShortcut("r", modifiers: [.command, .option])
             Divider()
+            Button("Unpack Archive to ADF") { model.unpackArchive() }
+            Divider()
             Button("Copy to Other Panel") { model.beginTransfer(isMove: false) }
             Button("Move to Other Panel") { model.beginTransfer(isMove: true) }
             Button("Rename…") { model.beginRename() }

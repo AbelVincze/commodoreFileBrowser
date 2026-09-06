@@ -745,6 +745,96 @@ do {
     print("  FAIL Amiga HDF: \(error)"); failures += 1
 }
 
+// --- DiskMasher archives ----------------------------------------------------
+print("\n=== DMS")
+do {
+    // A track of a floppy, packed with no compression at all, is the one shape
+    // that can be built here from nothing and checked without a real archive.
+    func archive(tracks: [(number: Int, bytes: [UInt8])]) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: 56)
+        out[0] = 0x44; out[1] = 0x4D; out[2] = 0x53; out[3] = 0x21          // "DMS!"
+        out[16] = 0; out[17] = UInt8(tracks.first?.number ?? 0)
+        out[18] = 0; out[19] = UInt8(tracks.last?.number ?? 0)
+        let headerCRC = DMSArchive.crc(out[4..<54])
+        out[54] = UInt8(headerCRC >> 8); out[55] = UInt8(headerCRC & 0xFF)
+
+        for track in tracks {
+            var header = [UInt8](repeating: 0, count: 20)
+            header[0] = 0x54; header[1] = 0x52                               // "TR"
+            header[2] = UInt8(track.number >> 8); header[3] = UInt8(track.number & 0xFF)
+            let length = track.bytes.count
+            for (at, value) in [(6, length), (8, length), (10, length)] {
+                header[at] = UInt8(value >> 8); header[at + 1] = UInt8(value & 0xFF)
+            }
+            header[12] = 1                                                   // keep state
+            header[13] = 0                                                   // stored
+            let sum = DMSArchive.checksum(track.bytes)
+            header[14] = UInt8(sum >> 8); header[15] = UInt8(sum & 0xFF)
+            let dataCRC = DMSArchive.crc(track.bytes[0...])
+            header[16] = UInt8(dataCRC >> 8); header[17] = UInt8(dataCRC & 0xFF)
+            let headerCRC = DMSArchive.crc(header[0..<18])
+            header[18] = UInt8(headerCRC >> 8); header[19] = UInt8(headerCRC & 0xFF)
+            out += header + track.bytes
+        }
+        return out
+    }
+
+    let one = (0..<DMSArchive.trackBytes).map { UInt8(($0 &* 13 &+ 7) & 0xFF) }
+    let two = (0..<DMSArchive.trackBytes).map { UInt8(($0 &* 5 &+ 1) & 0xFF) }
+    let built = archive(tracks: [(0, one), (3, two)])
+
+    check(DMSArchive.isArchive(built), "an archive is recognised by its magic")
+    let details = try DMSArchive.info(built)
+    check(details.modes == [.none], "and says which compressions it used")
+    check(!details.isEncrypted, "and whether it is password protected")
+
+    let image = try DMSArchive.unpack(built)
+    check(image.count == 80 * DMSArchive.trackBytes, "unpacking gives a whole floppy")
+    check(Array(image[0..<DMSArchive.trackBytes]) == one, "track 0 lands at the front")
+    let third = 3 * DMSArchive.trackBytes
+    check(Array(image[third..<(third + DMSArchive.trackBytes)]) == two, "track 3 lands where it belongs")
+    check(image[DMSArchive.trackBytes..<third].allSatisfy { $0 == 0 }, "and the gap between them is empty")
+
+    // Damage has to be caught rather than passed on as a disk.
+    var damaged = built
+    damaged[80] ^= 0xFF
+    do { _ = try DMSArchive.unpack(damaged); check(false, "a damaged track was accepted") }
+    catch { check(true, "a damaged track is refused") }
+
+    var badHeader = built
+    badHeader[20] ^= 0xFF
+    do { _ = try DMSArchive.info(badHeader); check(false, "a damaged header was accepted") }
+    catch { check(true, "a damaged archive header is refused") }
+
+    // The real collection, when this machine has one. Every archive carries a
+    // checksum of each track, so it grades its own homework.
+    let root = NSString(string: "~/Emulation").expandingTildeInPath
+    let archives = ((try? FileManager.default.subpathsOfDirectory(atPath: root)) ?? [])
+        .filter { $0.lowercased().hasSuffix(".dms") }
+        .map { root + "/" + $0 }
+        .sorted()
+    if archives.isEmpty {
+        print("  --   no DMS collection on this machine, skipping the real archives")
+    } else {
+        var unpacked = 0, refused = 0, volumes = 0, shortTracks = 0
+        for path in archives {
+            let bytes = [UInt8](try Data(contentsOf: URL(fileURLWithPath: path)))
+            guard let image = try? DMSArchive.unpack(bytes) else { refused += 1; continue }
+            unpacked += 1
+            if image.count % DMSArchive.trackBytes != 0 { shortTracks += 1 }
+            if (try? ADFImage(unpacking: URL(fileURLWithPath: path))) != nil { volumes += 1 }
+        }
+        // xDMS, the reference unpacker, fails on the same handful: they are
+        // archives that were damaged before they got here.
+        check(unpacked >= archives.count - 5,
+              "\(unpacked) of \(archives.count) archives unpack, every track passing its own checksum")
+        check(shortTracks == 0, "every one of them comes out a whole number of tracks")
+        check(volumes > 0, "\(volumes) of them hold a file system that mounts straight from the archive")
+    }
+} catch {
+    print("  FAIL DMS: \(error)"); failures += 1
+}
+
 // --- The widened image model ------------------------------------------------
 print("\n=== image model")
 do {

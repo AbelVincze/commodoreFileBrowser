@@ -38,6 +38,11 @@ struct RowContextMenu: View {
 
             Divider()
 
+            if model.isArchive(item) {
+                Button("Unpack to ADF") { run { model.unpackArchive(item) } }
+                Divider()
+            }
+
             if item.kind != .folder, item.kind != .volume {
                 Button("View") { run { model.beginView() } }
                 Button("View as Bitmap") { run { model.beginView(bitmap: true) } }

@@ -3,12 +3,18 @@ import Foundation
 /// An Amiga floppy image: 880K double density, or 1760K high density, holding
 /// one AmigaDOS volume. The image is small enough to keep in memory and write
 /// back whole, the way the Commodore formats here do.
+///
+/// A DMS archive arrives here too, unpacked into memory. It is the same volume
+/// once it is open — only where the bytes came from differs, and that it can
+/// only be read.
 final class ADFImage: DiskImage {
 
     let url: URL
     private let store: MemoryBlockStore
     private var volume: AmigaVolume
     let canWrite: Bool
+    /// Set when the image was unpacked from an archive rather than read whole.
+    private let archive: DMSArchive.Info?
 
     /// 1760 blocks of 512 on a double density disk, twice that on a high
     /// density one. Nothing else is an ADF.
@@ -24,6 +30,25 @@ final class ADFImage: DiskImage {
         store = MemoryBlockStore(bytes: [UInt8](data), blockSize: 512, url: url)
         volume = try AmigaVolume(store: store)
         canWrite = FileManager.default.isWritableFile(atPath: url.path)
+        archive = nil
+    }
+
+    /// Open a DiskMasher archive by unpacking it into memory. Nothing is
+    /// written back: the file on disk is the archive, not the disk.
+    init(unpacking url: URL) throws {
+        self.url = url
+        let packed = [UInt8](try Data(contentsOf: url))
+        let info = try DMSArchive.info(packed)
+        let bytes = try DMSArchive.unpack(packed)
+        store = MemoryBlockStore(bytes: bytes, blockSize: 512, url: nil)
+        volume = try AmigaVolume(store: store)
+        canWrite = false
+        archive = info
+    }
+
+    /// The disk this archive holds, as an ADF would have it.
+    static func unpackedImage(at url: URL) throws -> Data {
+        Data(try DMSArchive.unpack([UInt8](try Data(contentsOf: url))))
     }
 
     // MARK: - What the panel shows
@@ -42,6 +67,9 @@ final class ADFImage: DiskImage {
 
     var formatName: String {
         let size = store.blockCount == 3520 ? "1760K" : "880K"
+        if let archive {
+            return "DMS (\(archive.modeNames)) · \(size), \(volume.variant.name)"
+        }
         return "ADF (\(size), \(volume.variant.name))"
     }
 
@@ -137,6 +165,8 @@ final class ADFImage: DiskImage {
     func save() throws { try store.flush() }
 
     func reload() throws {
+        // An unpacked archive has nothing on disk to reload from.
+        guard archive == nil else { return }
         try store.reload()
         volume = try AmigaVolume(store: store)
     }

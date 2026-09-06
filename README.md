@@ -12,6 +12,10 @@ and run, or:
 xcodebuild -project CommodoreFileBrowser.xcodeproj -scheme CommodoreFileBrowser -configuration Release build
 ```
 
+The app lands in `build/Products/Release/`. `SYMROOT` and `OBJROOT` are set in
+the project, so builds go to the project's own `build/` folder rather than to
+derived data, from Xcode and from the command line alike.
+
 ## How it works
 
 Two panels sit side by side. Each one shows either the list of mounted volumes
@@ -261,6 +265,10 @@ When the addresses are known the tune starts playing as the sheet opens; a file
 needing them typed in waits. The SID model and the oscilloscope settings are
 remembered from one tune to the next, and the remembered model takes precedence
 over the one a PSID header asks for.
+
+`⌘Q` quits from anywhere, including with a sheet open: a sheet disables the
+menu bar, so the shortcut never reaches the Quit item on its own and the app
+could not be left without dismissing whatever was in the way first.
 
 With the player open, `⌘↑` and `⌘↓` play the previous and next file, stepping
 over the `DEL` rules a directory is decorated with, and `⌘←` and `⌘→` walk the

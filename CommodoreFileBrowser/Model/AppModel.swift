@@ -135,6 +135,15 @@ final class AppModel: ObservableObject {
 
     /// Returns true when the key was consumed by the browser.
     func handleKey(_ event: NSEvent) -> Bool {
+        // A sheet disables the menu bar, so ⌘Q never reaches the Quit item
+        // while one is up and the app cannot be got out of without dismissing
+        // it first. Terminate here instead, which still saves state on the way
+        // out. Only the plain chord: ⇧⌘Q is the system's log out.
+        if event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
+           event.charactersIgnoringModifiers == "q" {
+            NSApp.terminate(nil)
+            return true
+        }
         if case .player = sheet { return handlePlayerKey(event) }
         guard sheet == nil else { return false }
         let shift = event.modifierFlags.contains(.shift)

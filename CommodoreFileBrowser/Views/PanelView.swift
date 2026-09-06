@@ -115,6 +115,13 @@ struct PanelView: View {
                 mainLine
             }
             .alignmentGuide(.top) { $0[.top] + PanelLayout.capInset(PanelLayout.infoFont) }
+            // Sized before the spacer. Without this the stack shares the offer
+            // with it, and the info line — the only thing here that can shrink
+            // — is laid out against half the room, truncating while the disk
+            // header line below it, whose width is fixed, runs on past the
+            // ellipsis. The marker's width is still reserved, so nothing it
+            // needs is taken away.
+            .layoutPriority(1)
             Spacer(minLength: 8)
             Text(typeMarker)
                 .font(.typeMarker(PanelLayout.markerSize))

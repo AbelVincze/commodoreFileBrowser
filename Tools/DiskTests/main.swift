@@ -658,6 +658,23 @@ do {
 
     csid_scope_enable(0)
 
+    // The picture an export writes. Odd dimensions are the failure that matters:
+    // H.264 will not take them.
+    do {
+        let expected: [(VideoResolution, VideoAspect, Int, Int)] = [
+            (.p720, .sixteenNine, 1280, 720), (.p1080, .sixteenNine, 1920, 1080),
+            (.uhd4K, .sixteenNine, 3840, 2160), (.p720, .fourThree, 960, 720),
+            (.p1080, .fourThree, 1440, 1080), (.uhd4K, .fourThree, 2880, 2160),
+        ]
+        for (resolution, aspect, width, height) in expected {
+            let size = VideoFormat.size(resolution, aspect)
+            check(Int(size.width) == width && Int(size.height) == height,
+                  "\(resolution.label) \(aspect.label) is \(Int(size.width))×\(Int(size.height))")
+            check(Int(size.width) % 2 == 0 && Int(size.height) % 2 == 0,
+                  "and both sides are even")
+        }
+    }
+
     // Trigger sync. Tested on a controlled wave first: a real tune changes what
     // it is playing between frames, so drift there measures the music, not the
     // alignment.
@@ -670,24 +687,32 @@ do {
         let first = square(period: 100, phase: 0)
         let second = square(period: 100, phase: 37)
         let w = ScopeRenderer.displayWindow
-        let s1 = ScopeRenderer.triggerOffset(first), s2 = ScopeRenderer.triggerOffset(second)
-        check(s1 != s2, "the two phases trigger at different offsets (\(s1) and \(s2))")
+        let s1 = ScopeRenderer.windowStart(first), s2 = ScopeRenderer.windowStart(second)
+        check(s1 != s2, "the two phases start the window at different offsets (\(s1) and \(s2))")
         check(Array(first[s1..<(s1 + w)]) == Array(second[s2..<(s2 + w)]),
               "triggered windows are identical despite the phase difference")
         check(Array(first[0..<w]) != Array(second[0..<w]),
               "and untriggered they would not have been")
 
-        // Every trigger must land on a rising crossing.
+        // Every trigger must land on a rising crossing, and sit at the middle
+        // of the drawn window rather than at its left edge.
         for phase in [0, 13, 49, 71, 99] {
             let wave = square(period: 100, phase: phase)
-            let start = ScopeRenderer.triggerOffset(wave)
-            check(start > 0 && wave[start] > 0 && wave[start - 1] < 0,
-                  "phase \(phase) triggers on a rising edge at \(start)")
+            guard let index = ScopeRenderer.triggerIndex(wave) else {
+                check(false, "phase \(phase) triggers at all"); continue
+            }
+            check(wave[index] > 0 && wave[index - 1] < 0,
+                  "phase \(phase) triggers on a rising edge at \(index)")
+            let start = ScopeRenderer.windowStart(wave)
+            check(start == index - w / 2, "the trigger sits half a window in")
+            check(start >= 0 && start + w <= wave.count, "the centred window stays in the buffer")
         }
 
-        check(ScopeRenderer.triggerOffset([Int16](repeating: 0, count: 2048)) == 0,
-              "silence triggers at 0")
-        check(ScopeRenderer.triggerOffset([Int16](repeating: 0, count: 10)) == 0,
+        check(ScopeRenderer.triggerIndex([Int16](repeating: 0, count: 2048)) == nil,
+              "silence never triggers")
+        check(ScopeRenderer.windowStart([Int16](repeating: 0, count: 2048)) == 512,
+              "and draws the middle of the buffer")
+        check(ScopeRenderer.windowStart([Int16](repeating: 0, count: 10)) == 0,
               "a buffer shorter than the window is safe")
     }
 
@@ -710,14 +735,13 @@ do {
             let length = Int(csid_scope_length())
             var buf = [Int16](repeating: 0, count: length)
             buf.withUnsafeMutableBufferPointer { csid_scope_read(1, $0.baseAddress, Int32(length)) }
-            let start = ScopeRenderer.triggerOffset(buf)
-            if start > 0 {
+            if let index = ScopeRenderer.triggerIndex(buf) {
                 fired += 1
                 // The contract is hysteresis, not a sign change on the very
                 // previous sample: the signal fell below the threshold at some
                 // point before rising back through it. The sample just before
                 // the trigger may sit inside the dead band.
-                if buf[start] >= 400, buf[0..<start].contains(where: { $0 < -400 }) { rising += 1 }
+                if buf[index] >= 400, buf[0..<index].contains(where: { $0 < -400 }) { rising += 1 }
             }
         }
         check(fired > 20, "the trigger fired on \(fired) of 40 frames of real audio")
@@ -760,9 +784,24 @@ do {
     check(abs(Double(afterBack - after200) - 50.0) < 2,
           "back to tune timing: \(afterBack - after200) calls, and still no restart")
 
+    // Fast forward is that same live rate change, worked out the way the player
+    // works it out: ten times whatever the engine is running at, whether that
+    // came from the tune or from the speed row.
+    let fast = 10.0 * 44100.0 / csid_frame_sampleperiod()
+    csid_set_speed_hz(fast)
+    renderSecond()
+    let afterFast = UInt(csid_play_call_count())
+    check(abs(Double(afterFast - afterBack) - 500.0) < 15,
+          "fast forward ran a second at ten times the rate: \(afterFast - afterBack) calls")
+    csid_set_speed_hz(0)            // key released
+    renderSecond()
+    let afterRelease = UInt(csid_play_call_count())
+    check(abs(Double(afterRelease - afterFast) - 50.0) < 2,
+          "and let go it is back to the tune's own rate: \(afterRelease - afterFast) calls")
+
     csid_set_model(6581)            // live
     renderSecond()
-    check(UInt(csid_play_call_count()) > afterBack, "changing chip model did not restart either")
+    check(UInt(csid_play_call_count()) > afterRelease, "changing chip model did not restart either")
 
     // And the model choice does reach the sound.
     func fingerprintFromStart(model: Int32) -> Int {

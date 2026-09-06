@@ -14,7 +14,7 @@ enum SIDVideoExporter {
         var mode: ScopeMode = .voices
         var seconds: Double = 30
         var fps: Int = 50
-        var size = CGSize(width: 960, height: 540)
+        var size = VideoFormat.size(.p720, .sixteenNine)
         var foreground: CGColor = NSColor.white.cgColor
         var background: CGColor = NSColor.black.cgColor
         var grid: CGColor = NSColor.darkGray.cgColor
@@ -35,8 +35,9 @@ enum SIDVideoExporter {
         let framesPerVideoFrame = Int(SIDPlayer.sampleRate) / fps
         let totalFrames = max(1, Int(settings.seconds * Double(fps)))
 
-        // The engine is ours alone for this.
-        player.stop()
+        // The engine is ours alone for this. Pause rather than stop: the load
+        // below rewinds it anyway.
+        player.pause()
 
         // Pass one: the whole soundtrack. Playback is deterministic, so the
         // video pass can replay the same tune from the start and stay in step.

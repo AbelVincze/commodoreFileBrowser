@@ -231,7 +231,31 @@ The addresses it needs are worked out three ways:
 Speed and SID model take effect where they stand: the tune plays on rather than
 restarting from the beginning, and switching the speed back to *Tune* restores
 whatever rate the tune itself asked for. Choosing a different song does restart,
-since that means running init again.
+since that means running init again. The speed is in Hertz, and a new file
+always opens on *Tune*: a rate that suited the last tune says nothing about this
+one, and leaving it set was a good way to wonder why a tune sounded wrong.
+
+### Transport
+
+Three buttons: play/pause, stop and fast forward. Pause holds the tune where it is
+and play picks it up from there; stop rewinds, so the next play starts the tune
+from the top. Editing an address and pressing play builds the tune again rather
+than resuming.
+
+Fast forward runs for exactly as long as the key is held down: the play routine
+is called ten times as often, so ten seconds of tune go by in one — the pitch is
+untouched, only the tempo. The clock beside them counts the same ten seconds
+rather than the one, since what it says is where in the tune the sound has got
+to. Beside it is the rate the play routine is actually being called at, which is
+the one place the tune's own timing shows as a figure.
+
+The volume slider sits at the right of the row, and its level is remembered from
+one tune to the next. Ten times the events per second is harsh at full level, so
+fast forward plays at half — the slider does not move for it, since the level
+asked for has not changed. Both that and a drag of the slider are eased in
+across a buffer rather than stepped to, so neither arrives as a click. An
+exported video is unaffected: it is rendered from the engine directly, and the
+level is a monitoring choice.
 
 When the addresses are known the tune starts playing as the sheet opens; a file
 needing them typed in waits. The SID model and the oscilloscope settings are
@@ -253,22 +277,33 @@ its CIA timer asks for.
 ### Oscilloscope
 
 An optional scope draws either the mixed output or one trace per voice. Each
-frame starts at a rising crossing of zero rather than wherever the buffer
-happens to begin, so the trace stands still instead of sliding across the cell —
-the same trigger an oscilloscope uses. Hysteresis stops a wave dithering around
-zero from firing several times a cycle. Noise never locks, which is right: there
-is no phase to lock to.
+frame is lined up on a rising crossing of zero rather than on wherever the
+buffer happens to begin, so the trace stands still instead of sliding across the
+cell — the same trigger an oscilloscope uses. The crossing sits in the middle of
+the cell, with half a window of wave drawn either side of it. Hysteresis stops a
+wave dithering around zero from firing several times a cycle. Noise never locks,
+which is right: there is no phase to lock to.
  Per
 voice it is always **three rows**, one column per SID chip, so a column is that
 chip's voices 1-3 — 3 traces for one chip, 6 for two, 9 for three. (The engine
 emulates at most three chips, so nine voices is the ceiling.)
 
-*Export…* writes the scope to an `.mp4` with the tune as its soundtrack, into
-the folder on show — or the folder holding the image, when the panel is inside
-one. Rendering is offline rather than real time: the soundtrack is rendered
-first, then the engine is rewound and replayed a video frame at a time, so
-picture and sound stay in step however long the export takes. A three second
-clip takes well under a second.
+*Export…* writes the scope to an `.mp4` with the tune as its soundtrack, into the
+folder on show — or the folder holding the image, when the panel is inside one.
+Rendering is offline rather than real time: the soundtrack is rendered first,
+then the engine is rewound and replayed a video frame at a time, so picture and
+sound stay in step however long the export takes. A three second clip takes well
+under a second.
+
+The picture is 720p, 1080p or 4K, at 4:3 or 16:9 — 960, 1440 and 2880 wide at
+4:3, and 1280, 1920 and 3840 at 16:9, so both sides always come out even, which
+is what H.264 wants. Hovering the row says which, in pixels. The choice is
+remembered from one tune to the next, as is the length.
+
+The scope is drawn against a 540 tall reference and scaled from there, so a 4K
+frame gets a trace four times as thick rather than a hairline, and no more steps
+along it than there are samples in the window: past that the line is a staircase
+of repeated values rather than a finer curve.
 
 The engine is [cSID-light](http://hermit.sidrip.com) by Hermit
 (Mihaly Horvath), vendored into `Audio/csid.c` with SDL and its `main()`

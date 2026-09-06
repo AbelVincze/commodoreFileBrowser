@@ -215,6 +215,11 @@ final class SettingsStore: ObservableObject {
     @Published var scopeEnabled: Bool { didSet { save() } }
     /// Stored as the raw value so the settings store stays clear of the views.
     @Published var scopeMode: String { didSet { save() } }
+    @Published var sidVolume: Double { didSet { save() } }
+    /// Video export choices, stored as raw values for the same reason.
+    @Published var exportResolution: String { didSet { save() } }
+    @Published var exportAspect: String { didSet { save() } }
+    @Published var exportSeconds: Double { didSet { save() } }
 
     private struct Stored: Codable {
         var appearance: AppearanceMode
@@ -231,6 +236,10 @@ final class SettingsStore: ObservableObject {
         var sidModel: Int?
         var scopeEnabled: Bool?
         var scopeMode: String?
+        var sidVolume: Double?
+        var exportResolution: String?
+        var exportAspect: String?
+        var exportSeconds: Double?
     }
 
     private static let key = "theme.v1"
@@ -253,6 +262,10 @@ final class SettingsStore: ObservableObject {
         sidModel = stored?.sidModel ?? 8580
         scopeEnabled = stored?.scopeEnabled ?? false
         scopeMode = stored?.scopeMode ?? "voices"
+        sidVolume = stored?.sidVolume ?? 1
+        exportResolution = stored?.exportResolution ?? VideoResolution.p720.rawValue
+        exportAspect = stored?.exportAspect ?? VideoAspect.sixteenNine.rawValue
+        exportSeconds = stored?.exportSeconds ?? 30
         loading = false
     }
 
@@ -263,7 +276,9 @@ final class SettingsStore: ObservableObject {
                             deleteToTrash: deleteToTrash, splitFraction: splitFraction,
                             bitmapMagnification: bitmapMagnification, bitmapInvert: bitmapInvert,
                             viewerUsesC64Offsets: viewerUsesC64Offsets,
-                            sidModel: sidModel, scopeEnabled: scopeEnabled, scopeMode: scopeMode)
+                            sidModel: sidModel, scopeEnabled: scopeEnabled, scopeMode: scopeMode,
+                            sidVolume: sidVolume, exportResolution: exportResolution,
+                            exportAspect: exportAspect, exportSeconds: exportSeconds)
         if let data = try? JSONEncoder().encode(stored) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

@@ -13,9 +13,21 @@ final class SIDPlayer: ObservableObject {
     @Published private(set) var tune: SIDTune?
     @Published var errorMessage: String?
 
+    /// Held down, the play routine is called ten times as often: the tune races
+    /// ahead while the audio still comes out at the usual sample rate.
+    static let fastForwardFactor = 10.0
+    /// Ten times the events per second is a harsh noise at full level, so fast
+    /// forward plays at half. The control does not move for it: what was asked
+    /// for has not changed, only what is worth listening to.
+    static let fastForwardGain: Float = 0.5
+
+    /// Output level, 0 to 1.
+    @Published var volume: Double = 1 { didSet { applyGain() } }
+
     /// Calls to the play routine per second. Zero keeps the tune's own timing.
     /// Applied where it stands, so the tune plays on.
-    @Published var speedHz: Double = 0 { didSet { apply { csid_set_speed_hz(speedHz) } } }
+    @Published var speedHz: Double = 0 { didSet { applyRate() } }
+    @Published private(set) var isFastForwarding = false
     /// Written to A, X and Y before init — how a subtune is chosen. This one
     /// does restart: picking a song means running init again.
     @Published var selector: UInt8 = 0 { didSet { restart() } }
@@ -35,6 +47,14 @@ final class SIDPlayer: ObservableObject {
     /// render block, so it measures what was actually heard and stops moving
     /// when playback does. A plain pointer keeps `self` out of that block.
     private let playedFrames: UnsafeMutablePointer<Int64>
+    /// What one rendered sample is worth on the clock: ten while fast
+    /// forwarding, since ten times as much tune goes by in that second.
+    private let timeScale: UnsafeMutablePointer<Double>
+    /// The level to play at, and the level being played at. The render block
+    /// eases the second towards the first across a buffer, so neither a drag of
+    /// the control nor fast forward halving it arrives as a click.
+    private let targetGain: UnsafeMutablePointer<Float>
+    private let currentGain: UnsafeMutablePointer<Float>
 
     init() {
         lock = .allocate(capacity: 1)
@@ -43,12 +63,21 @@ final class SIDPlayer: ObservableObject {
         scratch.initialize(repeating: 0, count: scratchCapacity)
         playedFrames = .allocate(capacity: 1)
         playedFrames.initialize(to: 0)
+        timeScale = .allocate(capacity: 1)
+        timeScale.initialize(to: 1)
+        targetGain = .allocate(capacity: 1)
+        targetGain.initialize(to: 1)
+        currentGain = .allocate(capacity: 1)
+        currentGain.initialize(to: 1)
     }
 
     deinit {
         engine.stop()
         scratch.deallocate()
         playedFrames.deallocate()
+        timeScale.deallocate()
+        targetGain.deallocate()
+        currentGain.deallocate()
         lock.deallocate()
     }
 
@@ -57,7 +86,7 @@ final class SIDPlayer: ObservableObject {
     /// `preferredModel` is the remembered choice and takes precedence over the
     /// model a PSID header asks for.
     func load(_ tune: SIDTune, preferredModel: Int? = nil) {
-        stop()
+        pause()
         self.tune = tune
         selector = tune.selector
         sidModel = preferredModel ?? tune.sidModel ?? 8580
@@ -76,18 +105,58 @@ final class SIDPlayer: ObservableObject {
         }
     }
 
-    func stop() {
+    /// Silence, but stay where the tune is: playing again picks up from here.
+    func pause() {
+        setFastForward(false)
         if engine.isRunning { engine.stop() }
         isPlaying = false
     }
 
-    func toggle() { isPlaying ? stop() : play() }
+    /// Silence and rewind. Init runs again, so the next play starts the tune
+    /// from the top and the clock goes back to zero.
+    func stop() {
+        pause()
+        configure()
+    }
+
+    func toggle() { isPlaying ? pause() : play() }
+
+    /// Fast forward, for as long as the key is held.
+    func setFastForward(_ on: Bool) {
+        guard on != isFastForwarding, tune != nil else { return }
+        isFastForwarding = on
+        applyRate()
+        applyGain()
+    }
+
+    /// One aligned word, written here and read by the render block without
+    /// taking the lock: at worst it reads the old level for one buffer, and the
+    /// ramp there covers even that.
+    private func applyGain() {
+        let asked = Float(max(0, min(1, volume)))
+        targetGain.pointee = isFastForwarding ? asked * Self.fastForwardGain : asked
+    }
 
     /// Re-run init with the current settings, keeping playback going.
     private func restart() {
         guard tune != nil else { return }
         configure()
     }
+
+    /// The rate the engine should run at: the one asked for, times ten while
+    /// fast forwarding. Asking for the requested rate first is what resolves
+    /// the base — zero means the tune's own timing, which only the engine knows
+    /// — so holding the key never compounds with itself. Call with the lock held.
+    private func setRateLocked() {
+        csid_set_speed_hz(speedHz)
+        let period = csid_frame_sampleperiod()
+        if isFastForwarding, period > 1 {
+            csid_set_speed_hz(Self.fastForwardFactor * Self.sampleRate / period)
+        }
+        timeScale.pointee = isFastForwarding ? Self.fastForwardFactor : 1
+    }
+
+    private func applyRate() { apply { setRateLocked() } }
 
     /// A small engine change made under the same lock the render block uses,
     /// so it cannot land halfway through a buffer.
@@ -112,6 +181,7 @@ final class SIDPlayer: ObservableObject {
                      UInt32(tune.extraSIDAddresses.dropFirst().first ?? 0))
         csid_set_speed_hz(speedHz)
         csid_start(selector, selector)
+        setRateLocked()   // the tune's own rate is only known once init has run
         os_unfair_lock_unlock(lock)
     }
 
@@ -119,8 +189,17 @@ final class SIDPlayer: ObservableObject {
 
     var sidCount: Int { Int(csid_sid_count()) }
 
-    /// How long the tune has been playing, from the tune's own start.
+    /// How far into the tune the sound has got, from the tune's own start.
+    /// Fast forwarded seconds count ten to the second, so this stays a position
+    /// in the music rather than a measure of how long the key was held.
     var elapsed: TimeInterval { Double(playedFrames.pointee) / Self.sampleRate }
+
+    /// Calls to the play routine the engine is actually making per second —
+    /// the tune's own rate, or whatever was asked for, or ten times either.
+    var playRateHz: Double {
+        let period = csid_frame_sampleperiod()
+        return period > 0 ? Self.sampleRate / period : 0
+    }
 
     func setScope(enabled: Bool) { csid_scope_enable(enabled ? 1 : 0) }
 
@@ -163,6 +242,9 @@ final class SIDPlayer: ObservableObject {
         let scratch = self.scratch
         let capacity = self.scratchCapacity
         let played = self.playedFrames
+        let scale = self.timeScale
+        let wanted = self.targetGain
+        let reached = self.currentGain
 
         let node = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
@@ -173,14 +255,21 @@ final class SIDPlayer: ObservableObject {
                 for i in 0..<frames { out[i] = 0 }
                 return noErr
             }
+            let level = wanted.pointee
+            var gain = reached.pointee
+            let ramp = (level - gain) / Float(frames)
             var done = 0
             while done < frames {
                 let chunk = min(capacity, frames - done)
                 csid_render(scratch, Int32(chunk))
-                for i in 0..<chunk { out[done + i] = Float(scratch[i]) / 32768.0 }
+                for i in 0..<chunk {
+                    out[done + i] = Float(scratch[i]) / 32768.0 * gain
+                    gain += ramp
+                }
                 done += chunk
             }
-            played.pointee += Int64(frames)
+            reached.pointee = level
+            played.pointee += Int64(Double(frames) * scale.pointee)
             os_unfair_lock_unlock(lock)
             return noErr
         }

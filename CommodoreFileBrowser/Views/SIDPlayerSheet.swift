@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// What the browser hands the player: the file, and whether its addresses were
 /// worked out or have to be typed in.
@@ -26,11 +27,18 @@ struct SIDPlayerSheet: View {
     @State private var loadError: String?
     @State private var showScope: Bool
     @State private var scopeMode: ScopeMode
-    @State private var exportSeconds = "30"
+    @State private var exportSeconds: String
+    @State private var exportResolution: VideoResolution
+    @State private var exportAspect: VideoAspect
     @State private var exportProgress: Double?
     @State private var exportedTo: String?
     @State private var elapsed: TimeInterval = 0
-    @State private var clock = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
+    @State private var rateHz: Double = 0
+    /// The addresses the engine was last built from, so play knows whether it
+    /// is resuming or has to build a tune from edited fields first.
+    @State private var loadedFrom = ""
+    /// .common so the readout keeps counting while a menu or a drag is up.
+    @State private var clock = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     private static let speedPresets: [Double] = [0, 50, 100, 200, 400]
 
@@ -52,7 +60,14 @@ struct SIDPlayerSheet: View {
         _initText = State(initialValue: String(format: "%04X", request.detected?.initAddress ?? load))
         _playText = State(initialValue: String(format: "%04X",
                                                request.detected?.playAddress ?? ((load + 3) & 0xFFFF)))
-        _speedText = State(initialValue: "0")
+        // A new file always starts on the tune's own timing: a rate that suited
+        // the last tune says nothing about this one.
+        _speedText = State(initialValue: "")
+        _exportSeconds = State(initialValue: String(Int(settings.exportSeconds)))
+        _exportResolution = State(initialValue:
+            VideoResolution(rawValue: settings.exportResolution) ?? .p720)
+        _exportAspect = State(initialValue:
+            VideoAspect(rawValue: settings.exportAspect) ?? .sixteenNine)
     }
 
     var body: some View {
@@ -73,9 +88,14 @@ struct SIDPlayerSheet: View {
             transport
         }
         .frame(width: showScope ? 560 : 460)
+        // Set once for the sheet rather than per control: the buttons, pickers,
+        // steppers and toggles in it all read at one size that way.
+        .controlSize(.small)
         .background(palette.color(.window))
         .onAppear {
             player.setScope(enabled: showScope)
+            player.volume = settings.sidVolume
+            player.speedHz = 0
             loadTune()
             // Everything needed is already known, so start straight away.
             if request.detected != nil { player.play() }
@@ -86,7 +106,19 @@ struct SIDPlayerSheet: View {
         }
         .onChange(of: scopeMode) { _, mode in settings.scopeMode = mode.rawValue }
         .onChange(of: player.sidModel) { _, model in settings.sidModel = model }
-        .onReceive(clock) { _ in elapsed = player.elapsed }
+        .onChange(of: exportResolution) { _, value in settings.exportResolution = value.rawValue }
+        .onChange(of: exportAspect) { _, value in settings.exportAspect = value.rawValue }
+        .onReceive(clock) { _ in
+            elapsed = player.elapsed
+            rateHz = player.playRateHz
+            // Fast forward lasts as long as the mouse is down. If the release
+            // was missed — let go outside the window, or swallowed on its way
+            // to the key — this is what ends it, rather than the tune being
+            // left racing.
+            if player.isFastForwarding, NSEvent.pressedMouseButtons & 1 == 0 {
+                player.setFastForward(false)
+            }
+        }
         .onDisappear { player.setScope(enabled: false); player.stop() }
     }
 
@@ -168,7 +200,13 @@ struct SIDPlayerSheet: View {
                 Text("Speed").font(.system(size: 11)).frame(width: 42, alignment: .leading)
                 Picker("", selection: Binding(
                     get: { Self.speedPresets.contains(player.speedHz) ? player.speedHz : -1 },
-                    set: { if $0 >= 0 { player.speedHz = $0; speedText = String(Int($0)) } }
+                    set: {
+                        guard $0 >= 0 else { return }          // "Other": the field speaks
+                        player.speedHz = $0
+                        // Nothing to show for the tune's own timing, which is a
+                        // rate the tune states rather than one to type.
+                        speedText = $0 > 0 ? String(Int($0)) : ""
+                    }
                 )) {
                     Text("Tune").tag(0.0)
                     Text("50").tag(50.0)
@@ -179,13 +217,12 @@ struct SIDPlayerSheet: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                TextField("Hz", text: $speedText)
+                TextField("", text: $speedText)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 60)
+                    .frame(width: 52)
                     .font(.system(size: 11, design: .monospaced))
-                    .onSubmit {
-                        if let hz = Double(speedText), hz >= 0, hz <= 20000 { player.speedHz = hz }
-                    }
+                    .onSubmit(applyTypedSpeed)
+                Text("Hz").font(.system(size: 10)).foregroundStyle(palette.color(.dim))
             }
 
             HStack(spacing: 8) {
@@ -227,10 +264,23 @@ struct SIDPlayerSheet: View {
     private var exportRow: some View {
         HStack(spacing: 8) {
             Text("Video").font(.system(size: 11)).frame(width: 42, alignment: .leading)
+            Picker("", selection: $exportResolution) {
+                ForEach(VideoResolution.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 132)
+            Picker("", selection: $exportAspect) {
+                ForEach(VideoAspect.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 92)
             TextField("30", text: $exportSeconds)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 46)
                 .font(.system(size: 11, design: .monospaced))
+                .onSubmit { rememberExportSeconds() }
             Text("seconds").font(.system(size: 10)).foregroundStyle(palette.color(.dim))
             Spacer(minLength: 0)
             if let exportProgress {
@@ -238,10 +288,10 @@ struct SIDPlayerSheet: View {
             } else {
                 Button("Export…", action: exportVideo)
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
                     .disabled(request.destination == nil)
             }
         }
+        .help("The export writes \(pictureSize)")
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .overlay(alignment: .bottomLeading) {
@@ -256,27 +306,53 @@ struct SIDPlayerSheet: View {
         }
     }
 
+    /// What the export will write, so the choice above is visible as pixels.
+    private var pictureSize: String {
+        let size = VideoFormat.size(exportResolution, exportAspect)
+        return "\(Int(size.width)) × \(Int(size.height))"
+    }
+
+    /// Blank means the tune's own timing, the same as picking Tune.
+    private func applyTypedSpeed() {
+        let text = speedText.trimmingCharacters(in: .whitespaces)
+        if text.isEmpty { player.speedHz = 0; return }
+        if let hz = Double(text), hz >= 0, hz <= 20000 {
+            player.speedHz = hz
+            if hz == 0 { speedText = "" }
+        }
+    }
+
+    /// A minute of 4K is a long wait, so the length is held to ten minutes.
+    @discardableResult private func rememberExportSeconds() -> Double {
+        let seconds = max(1, min(600, Double(exportSeconds) ?? settings.exportSeconds))
+        exportSeconds = String(Int(seconds))
+        settings.exportSeconds = seconds
+        return seconds
+    }
+
     private func exportVideo() {
         guard let folder = request.destination, let tune = player.tune else { return }
-        let seconds = max(1, min(600, Double(exportSeconds) ?? 30))
+        let seconds = rememberExportSeconds()
         let safeName = (request.detected?.title ?? request.name)
             .trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "/", with: "-")
         let url = folder.appendingPathComponent("\(safeName).mp4")
 
-        var settings = SIDVideoExporter.Settings()
-        settings.mode = scopeMode
-        settings.seconds = seconds
-        settings.foreground = NSColor(palette.color(.text)).cgColor
-        settings.background = NSColor(palette.color(.panel)).cgColor
-        settings.grid = NSColor(palette.color(.border)).cgColor
+        // Named apart from the settings store, which this function also writes.
+        var video = SIDVideoExporter.Settings()
+        video.mode = scopeMode
+        video.seconds = seconds
+        video.size = VideoFormat.size(exportResolution, exportAspect)
+        video.foreground = NSColor(palette.color(.text)).cgColor
+        video.background = NSColor(palette.color(.panel)).cgColor
+        video.grid = NSColor(palette.color(.border)).cgColor
 
         exportProgress = 0
         exportedTo = nil
         let player = self.player
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                try SIDVideoExporter.export(tune: tune, player: player, settings: settings, to: url) {
+                try SIDVideoExporter.export(tune: tune, player: player, settings: video, to: url) {
                     exportProgress = $0
                 }
                 DispatchQueue.main.async {
@@ -295,26 +371,92 @@ struct SIDPlayerSheet: View {
     // MARK: - Transport
 
     private var transport: some View {
-        HStack(spacing: 10) {
-            Button(player.isPlaying ? "Stop" : "Play") {
-                if player.isPlaying { player.stop() } else { loadTune(); player.play() }
+        HStack(spacing: 8) {
+            // Left at the regular size while the rest of the sheet is small.
+            // These are what the sheet is for; everything above them is setup.
+            HStack(spacing: 8) {
+                Button(action: playPause) {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .frame(width: 18)
+                }
+                .keyboardShortcut(.defaultAction)
+                .help(player.isPlaying ? "Pause" : "Play")
+
+                Button(action: stopPlayback) {
+                    Image(systemName: "stop.fill").frame(width: 18)
+                }
+                .help("Stop and rewind to the beginning")
+
+                // Held rather than clicked, so the gesture rather than the
+                // action is what drives it: the tune runs ten times as fast for
+                // exactly as long as the mouse is down, wherever it is let go.
+                Button(action: {}) {
+                    Image(systemName: "forward.fill").frame(width: 18)
+                }
+                .disabled(!player.isPlaying)
+                .help("Hold to play at ten times speed")
+                .simultaneousGesture(DragGesture(minimumDistance: 0)
+                    .onChanged { _ in player.setFastForward(true) }
+                    .onEnded { _ in player.setFastForward(false) })
             }
-            .keyboardShortcut(.defaultAction)
-            Button("Reload") { loadTune(); if player.isPlaying { player.play() } }
+            .controlSize(.regular)
+
             Text(playTime)
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(palette.color(.dim))
                 .monospacedDigit()
+                .foregroundStyle(player.isPlaying ? palette.color(.text) : palette.color(.dim))
+                .fixedSize()
+            Text(rateLabel)
+                .font(.system(size: 10))
+                .foregroundStyle(palette.color(.dim))
+                .fixedSize()
+
             Spacer()
+            HStack(spacing: 5) {
+                Image(systemName: "speaker.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(palette.color(.dim))
+                // Written to the settings when the drag ends rather than on
+                // every step of it, which would re-encode the whole store a
+                // hundred times over one sweep of the slider.
+                Slider(value: $player.volume, in: 0...1) { editing in
+                    if !editing { settings.sidVolume = player.volume }
+                }
+                .frame(width: 80)
+            }
+            .help("Volume. Fast forward plays at half of it.")
+
             Button("Close", action: onClose).keyboardShortcut(.cancelAction)
         }
         .padding(14)
     }
 
     private var playTime: String {
-        let seconds = Int(elapsed)
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+        let tenths = max(0, Int((elapsed * 10).rounded(.down)))
+        return String(format: "%d:%02d.%d", tenths / 600, (tenths / 10) % 60, tenths % 10)
     }
+
+    /// The rate the play routine is actually being called at, which is the one
+    /// place the tune's own timing shows as a figure.
+    private var rateLabel: String {
+        guard rateHz > 0 else { return "" }
+        return String(format: "%.0f Hz", rateHz) + (player.isFastForwarding ? " ×10" : "")
+    }
+
+    /// Resume where the sound stopped, unless the addresses have been edited
+    /// since — then build the tune again and start it from the top.
+    private func playPause() {
+        if player.isPlaying { player.pause(); return }
+        if player.tune == nil || loadedFrom != fieldSignature { loadTune() }
+        player.play()
+    }
+
+    private func stopPlayback() {
+        player.stop()
+        elapsed = 0
+    }
+
+    private var fieldSignature: String { "\(initText)/\(playText)" }
 
     /// Build a tune from whatever the fields currently say and hand it over.
     private func loadTune() {
@@ -333,5 +475,6 @@ struct SIDPlayerSheet: View {
         }
         guard let tune else { loadError = "The file is too short to be a tune."; return }
         player.load(tune, preferredModel: settings.sidModel)
+        loadedFrom = fieldSignature
     }
 }

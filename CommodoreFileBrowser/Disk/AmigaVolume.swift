@@ -429,6 +429,556 @@ final class AmigaVolume {
         return Self.long(bitmap, 4 + at.long * 4) & (1 << UInt32(at.bit)) != 0
     }
 
+    // MARK: - Formatting a blank volume
+
+    /// The boot block's checksum adds its longs with the carry folded back in,
+    /// which is not the rule the rest of the volume uses.
+    static func bootChecksum(_ bytes: [UInt8]) -> UInt32 {
+        var sum: UInt32 = 0
+        for o in stride(from: 0, to: 1024, by: 4) where o != 4 {
+            let d = long(bytes, o)
+            if UInt32.max - sum < d { sum &+= 1 }
+            sum &+= d
+        }
+        return ~sum
+    }
+
+    /// A freshly formatted volume: a boot block that names the file system, a
+    /// root block in the middle, and a bitmap next to it with everything free
+    /// but those two.
+    static func format(blockCount: Int, blockSize: Int = 512,
+                       variant: Variant, name rawName: [UInt8],
+                       date: Date = Date()) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: blockCount * blockSize)
+        let volumeName = legalName(rawName)
+        let root = blockCount / 2
+        let bitmap = root + 1
+        let tableSize = blockSize / 4 - 56
+
+        bytes[0] = 0x44; bytes[1] = 0x4F; bytes[2] = 0x53      // "DOS"
+        bytes[3] = variant.dosFlags
+        setLong(&bytes, 8, root)
+        setLong(&bytes, 4, bootChecksum(bytes))
+
+        // Everything is free except the root block and the bitmap itself. The
+        // two boot blocks are not in the bitmap at all: they are never free.
+        var map = [UInt8](repeating: 0, count: blockSize)
+        let mappable = blockCount - 2
+        for index in 0..<mappable {
+            let o = 4 + (index / 32) * 4
+            var word = long(map, o)
+            word |= 1 << UInt32(index % 32)
+            setLong(&map, o, word)
+        }
+        for used in [root, bitmap] {
+            let index = used - 2
+            let o = 4 + (index / 32) * 4
+            setLong(&map, o, long(map, o) & ~(1 << UInt32(index % 32)))
+        }
+        applyHeaderChecksum(&map, at: 0)
+        for (i, b) in map.enumerated() { bytes[bitmap * blockSize + i] = b }
+
+        var rootBytes = [UInt8](repeating: 0, count: blockSize)
+        setLong(&rootBytes, 0, BlockType.header)
+        setLong(&rootBytes, 12, tableSize)                     // ht_size
+        setLong(&rootBytes, 24 + tableSize * 4, -1)            // bm_flag: the map is valid
+        setLong(&rootBytes, 24 + tableSize * 4 + 4, bitmap)    // bm_pages[0]
+        let fields = dateFields(date)
+        for offset in [blockSize - 92, blockSize - 40, blockSize - 28] {
+            setLong(&rootBytes, offset, fields.days)
+            setLong(&rootBytes, offset + 4, fields.mins)
+            setLong(&rootBytes, offset + 8, fields.ticks)
+        }
+        rootBytes[blockSize - 80] = UInt8(volumeName.count)
+        for (i, c) in volumeName.enumerated() { rootBytes[blockSize - 79 + i] = c }
+        setLong(&rootBytes, blockSize - 4, SecType.root)
+        applyHeaderChecksum(&rootBytes)
+        for (i, b) in rootBytes.enumerated() { bytes[root * blockSize + i] = b }
+
+        // A cached file system wants a cache for the root before anything else
+        // goes on the disk.
+        if variant.hasDirCache {
+            let store = MemoryBlockStore(bytes: bytes, blockSize: blockSize, url: nil)
+            if let volume = try? AmigaVolume(store: store), (try? volume.refreshDirectory(root)) != nil {
+                return store.bytes
+            }
+        }
+        return bytes
+    }
+
+    // MARK: - The directory cache
+    //
+    // DOS\4 and DOS\5 keep a second copy of each directory in blocks of packed
+    // records, so that listing a drawer reads a block or two instead of one
+    // block per entry. AmigaDOS trusts it over the directory itself, so a
+    // volume whose cache is stale reads wrong on a real machine — which is why
+    // every change here rebuilds the cache of the directory it touched.
+
+    /// Records are packed one after another, each rounded up to an even length.
+    private static func cacheRecordLength(name: [UInt8], comment: [UInt8]) -> Int {
+        let raw = 25 + name.count + comment.count
+        return raw % 2 == 0 ? raw : raw + 1
+    }
+
+    /// Free the cache blocks of a directory and forget them.
+    func releaseDirCache(of directory: Int) throws {
+        var block = try store.block(directory)
+        var next = Self.signed(block, extensionOffset)
+        var seen = Set<Int>()
+        while store.holds(next), next > 0, !seen.contains(next) {
+            seen.insert(next)
+            let cache = try store.block(next)
+            guard Self.signed(cache, 0) == BlockType.dirCache else { break }
+            let following = Self.signed(cache, 16)
+            try release(next)
+            next = following
+        }
+        Self.setLong(&block, extensionOffset, 0)
+        Self.applyHeaderChecksum(&block)
+        try store.write(directory, block)
+    }
+
+    /// Rebuild a directory's cache from the directory itself. Nothing to do on
+    /// the four file systems that keep no cache.
+    func refreshDirectory(_ directory: Int) throws {
+        guard variant.hasDirCache else { return }
+        try releaseDirCache(of: directory)
+
+        // Every entry, as the records the cache stores them as.
+        let dir = try store.block(directory)
+        var records: [[UInt8]] = []
+        var seen = Set<Int>()
+        for slot in 0..<tableSize {
+            var next = Self.signed(dir, hashTableOffset + slot * 4)
+            while store.holds(next), next > 0, !seen.contains(next) {
+                seen.insert(next)
+                if let record = try? cacheRecord(for: next) { records.append(record) }
+                next = Self.signed(try store.block(next), nextHashOffset)
+            }
+        }
+
+        // Pack them into as many blocks as it takes. An empty directory still
+        // gets one, which is what a real drive leaves behind.
+        let room = blockSize - 24
+        var pages: [[[UInt8]]] = [[]]
+        var used = 0
+        for record in records {
+            if used + record.count > room, !pages[pages.count - 1].isEmpty {
+                pages.append([]); used = 0
+            }
+            pages[pages.count - 1].append(record)
+            used += record.count
+        }
+
+        var blocks: [Int] = []
+        for _ in pages { blocks.append(try allocate()) }
+        for (index, page) in pages.enumerated() {
+            var bytes = [UInt8](repeating: 0, count: blockSize)
+            Self.setLong(&bytes, 0, BlockType.dirCache)
+            Self.setLong(&bytes, 4, blocks[index])
+            Self.setLong(&bytes, 8, directory)
+            Self.setLong(&bytes, 12, page.count)
+            Self.setLong(&bytes, 16, index + 1 < blocks.count ? blocks[index + 1] : 0)
+            var at = 24
+            for record in page {
+                for (i, b) in record.enumerated() { bytes[at + i] = b }
+                at += record.count
+            }
+            Self.applyHeaderChecksum(&bytes)
+            try store.write(blocks[index], bytes)
+        }
+
+        var owner = try store.block(directory)
+        Self.setLong(&owner, extensionOffset, blocks[0])
+        Self.applyHeaderChecksum(&owner)
+        try store.write(directory, owner)
+    }
+
+    /// One packed cache record. The four bytes after the protection bits are
+    /// unused, and leaving them out is the easiest way to write a cache that
+    /// AmigaDOS reads as gibberish.
+    private func cacheRecord(for entryBlock: Int) throws -> [UInt8] {
+        let block = try store.block(entryBlock)
+        let sec = Self.signed(block, secTypeOffset)
+        let isDirectory = sec == SecType.userDir || sec == SecType.linkDir
+        let entryName = name(in: block)
+        let comment: [UInt8] = []
+        var record = [UInt8](repeating: 0, count: Self.cacheRecordLength(name: entryName, comment: comment))
+
+        Self.setLong(&record, 0, entryBlock)
+        Self.setLong(&record, 4, isDirectory ? 0 : Int(Self.long(block, fileSizeOffset)))
+        Self.setLong(&record, 8, Int(Self.long(block, protectionOffset)))
+        let days = Self.signed(block, daysOffset)
+        let mins = Self.signed(block, daysOffset + 4)
+        let ticks = Self.signed(block, daysOffset + 8)
+        record[16] = UInt8(truncatingIfNeeded: days >> 8);  record[17] = UInt8(truncatingIfNeeded: days)
+        record[18] = UInt8(truncatingIfNeeded: mins >> 8);  record[19] = UInt8(truncatingIfNeeded: mins)
+        record[20] = UInt8(truncatingIfNeeded: ticks >> 8); record[21] = UInt8(truncatingIfNeeded: ticks)
+        record[22] = UInt8(bitPattern: Int8(truncatingIfNeeded: sec))
+        record[23] = UInt8(entryName.count)
+        record[24] = UInt8(comment.count)
+        for (i, c) in entryName.enumerated() { record[25 + i] = c }
+        for (i, c) in comment.enumerated() { record[25 + entryName.count + i] = c }
+        return record
+    }
+
+    /// The entries a directory's cache claims to hold, for checking it against
+    /// the directory it is meant to mirror.
+    func cachedNames(of directory: Int) throws -> [String] {
+        var out: [String] = []
+        var next = Self.signed(try store.block(directory), extensionOffset)
+        var seen = Set<Int>()
+        while store.holds(next), next > 0, !seen.contains(next) {
+            seen.insert(next)
+            let cache = try store.block(next)
+            guard Self.signed(cache, 0) == BlockType.dirCache else { break }
+            var at = 24
+            for _ in 0..<Self.signed(cache, 12) {
+                guard at + 25 <= blockSize else { break }
+                let nameLength = Int(cache[at + 23])
+                let commentLength = Int(cache[at + 24])
+                guard at + 25 + nameLength <= blockSize else { break }
+                out.append(NameEncoding.latin1.text(Array(cache[(at + 25)..<(at + 25 + nameLength)])))
+                let raw = 25 + nameLength + commentLength
+                at += raw % 2 == 0 ? raw : raw + 1
+            }
+            next = Self.signed(cache, 16)
+        }
+        return out
+    }
+
+    // MARK: - Allocation
+
+    /// Mark a block used or free and keep the bitmap block's checksum right.
+    private func setFree(_ block: Int, _ free: Bool) throws {
+        guard let at = try bitmapPosition(of: block) else {
+            throw DiskImageError.corrupt("block \(block) is outside the bitmap")
+        }
+        var bitmap = try store.block(at.block)
+        let offset = 4 + at.long * 4
+        let mask: UInt32 = 1 << UInt32(at.bit)
+        var word = Self.long(bitmap, offset)
+        if free { word |= mask } else { word &= ~mask }
+        Self.setLong(&bitmap, offset, word)
+        // A bitmap block keeps its checksum in the first long rather than the
+        // sixth, which is the one place the rule differs.
+        Self.setLong(&bitmap, 0, 0)
+        Self.applyHeaderChecksum(&bitmap, at: 0)
+        try store.write(at.block, bitmap)
+    }
+
+    /// Take a block for use, searching outwards from the root the way AmigaDOS
+    /// does, so that a file lands near the directory holding it.
+    func allocate() throws -> Int {
+        for distance in 0..<store.blockCount {
+            for candidate in [rootBlock + distance, rootBlock - distance] {
+                guard candidate >= 2, candidate < store.blockCount else { continue }
+                if try isFree(candidate) {
+                    try setFree(candidate, false)
+                    var empty = [UInt8](repeating: 0, count: blockSize)
+                    empty[0] = 0
+                    try store.write(candidate, empty)
+                    return candidate
+                }
+            }
+        }
+        throw DiskImageError.diskFull
+    }
+
+    func release(_ block: Int) throws {
+        guard block >= 2, block < store.blockCount else { return }
+        try setFree(block, true)
+    }
+
+    /// Note that the volume changed, which is a date on the root block and the
+    /// checksum that goes with it.
+    func touchRoot(_ date: Date = Date()) throws {
+        var root = try store.block(rootBlock)
+        let fields = Self.dateFields(date)
+        Self.setLong(&root, blockSize - 92, fields.days)
+        Self.setLong(&root, blockSize - 88, fields.mins)
+        Self.setLong(&root, blockSize - 84, fields.ticks)
+        Self.applyHeaderChecksum(&root)
+        try store.write(rootBlock, root)
+    }
+
+    // MARK: - Hash chains
+
+    /// Put an entry into the hash chain its name belongs to. AmigaDOS adds to
+    /// the end of the chain rather than the front, so a directory listed by
+    /// hash order keeps the order things were made in.
+    func insert(_ entryBlock: Int, into directory: Int) throws {
+        var entry = try store.block(entryBlock)
+        let entryName = name(in: entry)
+        let slot = hashTableOffset + hash(entryName) * 4
+
+        Self.setLong(&entry, nextHashOffset, 0)
+        Self.setLong(&entry, parentOffset, directory)
+        Self.applyHeaderChecksum(&entry)
+        try store.write(entryBlock, entry)
+
+        var dir = try store.block(directory)
+        let first = Self.signed(dir, slot)
+        if !store.holds(first) || first <= 0 {
+            Self.setLong(&dir, slot, entryBlock)
+            Self.applyHeaderChecksum(&dir)
+            try store.write(directory, dir)
+            return
+        }
+        var current = first
+        var seen = Set<Int>()
+        while !seen.contains(current) {
+            seen.insert(current)
+            var block = try store.block(current)
+            let next = Self.signed(block, nextHashOffset)
+            if !store.holds(next) || next <= 0 {
+                Self.setLong(&block, nextHashOffset, entryBlock)
+                Self.applyHeaderChecksum(&block)
+                try store.write(current, block)
+                return
+            }
+            current = next
+        }
+        throw DiskImageError.corrupt("the hash chain loops back on itself")
+    }
+
+    /// Take an entry out of its hash chain, leaving the rest of the chain whole.
+    func unlink(_ entryBlock: Int, from directory: Int) throws {
+        let entry = try store.block(entryBlock)
+        let following = Self.signed(entry, nextHashOffset)
+        let slot = hashTableOffset + hash(name(in: entry)) * 4
+
+        var dir = try store.block(directory)
+        if Self.signed(dir, slot) == entryBlock {
+            Self.setLong(&dir, slot, following)
+            Self.applyHeaderChecksum(&dir)
+            try store.write(directory, dir)
+            return
+        }
+        var current = Self.signed(dir, slot)
+        var seen = Set<Int>()
+        while store.holds(current), current > 0, !seen.contains(current) {
+            seen.insert(current)
+            var block = try store.block(current)
+            if Self.signed(block, nextHashOffset) == entryBlock {
+                Self.setLong(&block, nextHashOffset, following)
+                Self.applyHeaderChecksum(&block)
+                try store.write(current, block)
+                return
+            }
+            current = Self.signed(block, nextHashOffset)
+        }
+        throw DiskImageError.fileNotFound
+    }
+
+    // MARK: - Making and unmaking entries
+
+    /// Names AmigaDOS will take: thirty bytes, and neither of the two
+    /// characters that mean something in a path.
+    static func legalName(_ raw: [UInt8]) -> [UInt8] {
+        var out = raw.filter { $0 != 0x2F && $0 != 0x3A && $0 >= 0x20 }
+        if out.count > 30 { out = Array(out.prefix(30)) }
+        return out.isEmpty ? Array("unnamed".utf8) : out
+    }
+
+    func existingEntry(named wanted: [UInt8], in directory: Int) throws -> Int? {
+        try lookup(wanted, in: directory)
+    }
+
+    /// Write the fields every header block carries: its name, its date, and the
+    /// checksum over the lot.
+    private func stamp(_ block: inout [UInt8], name entryName: [UInt8], date: Date) {
+        let fields = Self.dateFields(date)
+        Self.setLong(&block, daysOffset, fields.days)
+        Self.setLong(&block, daysOffset + 4, fields.mins)
+        Self.setLong(&block, daysOffset + 8, fields.ticks)
+        block[nameLengthOffset] = UInt8(entryName.count)
+        for (i, c) in entryName.enumerated() { block[nameLengthOffset + 1 + i] = c }
+        Self.applyHeaderChecksum(&block)
+    }
+
+    /// Put a file into a directory: its data blocks, the header that lists
+    /// them, and however many extension blocks the list needs.
+    @discardableResult
+    func createFile(name rawName: [UInt8], data: Data, in directory: Int) throws -> Int {
+        let entryName = Self.legalName(rawName)
+        if try existingEntry(named: entryName, in: directory) != nil {
+            throw DiskImageError.nameExists(NameEncoding.latin1.text(entryName))
+        }
+
+        let payload = [UInt8](data)
+        let perBlock = dataBytesPerBlock
+        let dataCount = (payload.count + perBlock - 1) / perBlock
+        // The header holds the first tableful of pointers; every further
+        // tableful needs an extension block of its own.
+        let extensionCount = dataCount <= tableSize ? 0 : (dataCount - 1) / tableSize
+        guard freeBlocks >= dataCount + extensionCount + 1 else { throw DiskImageError.diskFull }
+
+        var taken: [Int] = []
+        func undo() { for b in taken { try? release(b) } }
+
+        do {
+            let header = try allocate(); taken.append(header)
+            var dataBlocks: [Int] = []
+            for _ in 0..<dataCount { let b = try allocate(); taken.append(b); dataBlocks.append(b) }
+            var extensionBlocks: [Int] = []
+            for _ in 0..<extensionCount { let b = try allocate(); taken.append(b); extensionBlocks.append(b) }
+
+            // The data itself. OFS puts a header on every block saying which
+            // file it belongs to and where in the file it sits; FFS does not.
+            for (i, block) in dataBlocks.enumerated() {
+                var bytes = [UInt8](repeating: 0, count: blockSize)
+                let start = i * perBlock
+                let take = min(perBlock, payload.count - start)
+                let offset = variant.isFFS ? 0 : 24
+                for j in 0..<take { bytes[offset + j] = payload[start + j] }
+                if !variant.isFFS {
+                    Self.setLong(&bytes, 0, BlockType.data)
+                    Self.setLong(&bytes, 4, header)
+                    Self.setLong(&bytes, 8, i + 1)
+                    Self.setLong(&bytes, 12, take)
+                    Self.setLong(&bytes, 16, i + 1 < dataBlocks.count ? dataBlocks[i + 1] : 0)
+                    Self.applyHeaderChecksum(&bytes)
+                }
+                try store.write(block, bytes)
+            }
+
+            // The pointer tables, filled from the far end backwards.
+            let tables = [header] + extensionBlocks
+            for (index, owner) in tables.enumerated() {
+                var bytes = [UInt8](repeating: 0, count: blockSize)
+                let slice = Array(dataBlocks.dropFirst(index * tableSize).prefix(tableSize))
+                Self.setLong(&bytes, 0, index == 0 ? BlockType.header : BlockType.list)
+                Self.setLong(&bytes, 4, owner)
+                Self.setLong(&bytes, 8, slice.count)
+                Self.setLong(&bytes, 16, slice.first ?? 0)
+                for (i, pointer) in slice.enumerated() {
+                    Self.setLong(&bytes, dataTableOffset + (tableSize - 1 - i) * 4, pointer)
+                }
+                let next = index + 1 < tables.count ? tables[index + 1] : 0
+                Self.setLong(&bytes, extensionOffset, next)
+                Self.setLong(&bytes, secTypeOffset, SecType.file)
+                if index == 0 {
+                    Self.setLong(&bytes, fileSizeOffset, payload.count)
+                    Self.setLong(&bytes, parentOffset, directory)
+                    stamp(&bytes, name: entryName, date: Date())
+                } else {
+                    Self.setLong(&bytes, parentOffset, header)
+                    Self.applyHeaderChecksum(&bytes)
+                }
+                try store.write(owner, bytes)
+            }
+
+            try insert(header, into: directory)
+            do { try refreshDirectory(directory) } catch {
+                try? unlink(header, from: directory)
+                throw error
+            }
+            try touchRoot()
+            return header
+        } catch {
+            undo()
+            throw error
+        }
+    }
+
+    @discardableResult
+    func createDirectory(name rawName: [UInt8], in directory: Int) throws -> Int {
+        let entryName = Self.legalName(rawName)
+        if try existingEntry(named: entryName, in: directory) != nil {
+            throw DiskImageError.nameExists(NameEncoding.latin1.text(entryName))
+        }
+        let block = try allocate()
+        var bytes = [UInt8](repeating: 0, count: blockSize)
+        Self.setLong(&bytes, 0, BlockType.header)
+        Self.setLong(&bytes, 4, block)
+        Self.setLong(&bytes, parentOffset, directory)
+        Self.setLong(&bytes, secTypeOffset, SecType.userDir)
+        stamp(&bytes, name: entryName, date: Date())
+        try store.write(block, bytes)
+
+        try insert(block, into: directory)
+        // A new directory needs a cache of its own before anything goes in it.
+        try refreshDirectory(block)
+        try refreshDirectory(directory)
+        try touchRoot()
+        return block
+    }
+
+    /// Free everything a file occupies: its data, its extension blocks and its
+    /// header. A directory has to be empty first, the way AmigaDOS insists.
+    func delete(_ entryBlock: Int, in directory: Int) throws {
+        let block = try store.block(entryBlock)
+        let sec = Self.signed(block, secTypeOffset)
+
+        if sec == SecType.userDir {
+            let dir = try store.block(entryBlock)
+            for slot in 0..<tableSize where Self.signed(dir, hashTableOffset + slot * 4) != 0 {
+                throw DiskImageError.directoryNotEmpty(NameEncoding.latin1.text(name(in: dir)))
+            }
+            try releaseDirCache(of: entryBlock)
+        } else if sec == SecType.file {
+            for data in try dataBlocks(of: entryBlock) { try release(data) }
+            // The extension blocks are the chain the data tables hang off.
+            var next = Self.signed(block, extensionOffset)
+            var seen = Set<Int>()
+            while store.holds(next), next > 0, !seen.contains(next) {
+                seen.insert(next)
+                let extensionBlock = try store.block(next)
+                let following = Self.signed(extensionBlock, extensionOffset)
+                try release(next)
+                next = following
+            }
+        }
+
+        try unlink(entryBlock, from: directory)
+        try release(entryBlock)
+        try refreshDirectory(directory)
+        try touchRoot()
+    }
+
+    /// A new name means a new hash, so the entry comes out of its chain and
+    /// goes back into the one the new name belongs to.
+    func rename(_ entryBlock: Int, in directory: Int, to rawName: [UInt8]) throws {
+        let entryName = Self.legalName(rawName)
+        if let existing = try existingEntry(named: entryName, in: directory), existing != entryBlock {
+            throw DiskImageError.nameExists(NameEncoding.latin1.text(entryName))
+        }
+        try unlink(entryBlock, from: directory)
+        var block = try store.block(entryBlock)
+        block[nameLengthOffset] = UInt8(entryName.count)
+        for i in 0..<30 {
+            block[nameLengthOffset + 1 + i] = i < entryName.count ? entryName[i] : 0
+        }
+        Self.applyHeaderChecksum(&block)
+        try store.write(entryBlock, block)
+        try insert(entryBlock, into: directory)
+        try refreshDirectory(directory)
+        try touchRoot()
+    }
+
+    func setProtection(_ entryBlock: Int, bits: UInt32) throws {
+        var block = try store.block(entryBlock)
+        Self.setLong(&block, protectionOffset, bits)
+        Self.applyHeaderChecksum(&block)
+        try store.write(entryBlock, block)
+        if let parent = try? Self.signed(store.block(entryBlock), parentOffset), store.holds(parent) {
+            try refreshDirectory(parent)
+        }
+    }
+
+    func setVolumeName(_ rawName: [UInt8]) throws {
+        let entryName = Self.legalName(rawName)
+        var root = try store.block(rootBlock)
+        root[nameLengthOffset] = UInt8(entryName.count)
+        for i in 0..<30 {
+            root[nameLengthOffset + 1 + i] = i < entryName.count ? entryName[i] : 0
+        }
+        Self.applyHeaderChecksum(&root)
+        try store.write(rootBlock, root)
+        try touchRoot()
+    }
+
     var freeBlocks: Int {
         guard let pages = try? bitmapPages() else { return 0 }
         let longsPerPage = blockSize / 4 - 1

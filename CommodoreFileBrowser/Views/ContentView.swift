@@ -159,15 +159,16 @@ struct ContentView: View {
         case .newImage:
             NewImageSheet(palette: palette,
                           onCancel: { model.sheet = nil },
-                          onConfirm: { kind, tracks, file, name, id in
+                          onConfirm: { kind, option, file, name, id in
                               model.sheet = nil
-                              model.performNewImage(kind: kind, tracks: tracks, fileName: file,
+                              model.performNewImage(kind: kind, option: option, fileName: file,
                                                     diskName: name, diskID: id)
                           })
         case .diskHeader:
             DiskHeaderSheet(palette: palette,
-                            name: PETSCII.ascii(PETSCII.trimPadding(model.activePanel.image?.diskName ?? [])),
+                            name: model.activePanel.image?.displayDiskName ?? "",
                             id: PETSCII.ascii(Array((model.activePanel.image?.diskID ?? []).prefix(2))),
+                            wantsID: model.activePanel.image?.diskID != nil,
                             onCancel: { model.sheet = nil },
                             onConfirm: { name, id in
                                 model.sheet = nil

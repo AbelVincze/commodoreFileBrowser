@@ -186,10 +186,10 @@ struct TextPromptSheet: View {
 struct NewImageSheet: View {
     let palette: Palette
     let onCancel: () -> Void
-    let onConfirm: (CBMDiskImage.BlankFormat, Int, String, String, String) -> Void
+    let onConfirm: (NewImageFormat, String, String, String, String) -> Void
 
-    @State private var kind: CBMDiskImage.BlankFormat = .d64
-    @State private var tracks = CBMDiskImage.BlankFormat.d64.defaultTracks
+    @State private var kind: NewImageFormat = .d64
+    @State private var option = NewImageFormat.d64.defaultOption
     @State private var fileName = "new"
     @State private var diskName = "new disk"
     @State private var diskID = "01"
@@ -201,21 +201,24 @@ struct NewImageSheet: View {
                     confirmTitle: "Create",
                     confirmDisabled: fileName.trimmingCharacters(in: .whitespaces).isEmpty,
                     onCancel: onCancel,
-                    onConfirm: { onConfirm(kind, tracks, fileName, diskName, diskID) }) {
+                    onConfirm: { onConfirm(kind, option, fileName, diskName, diskID) }) {
             VStack(alignment: .leading, spacing: 10) {
                 Picker("Format", selection: $kind) {
-                    ForEach(CBMDiskImage.BlankFormat.allCases) { Text($0.rawValue).tag($0) }
+                    ForEach(NewImageFormat.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                // Only the D64 has a choice to make; the others would be a
-                // picker with one option in it.
-                if kind.trackChoices.count > 1 {
-                    Picker("Tracks", selection: $tracks) {
-                        ForEach(kind.trackChoices, id: \.self) { Text("\($0)").tag($0) }
+                // Only two formats have a second choice to make — track counts
+                // on a D64, file systems on an ADF — and the others would be a
+                // picker with one option in it. Six file systems are more than
+                // a row of segments can hold, so those go in a menu.
+                if !kind.options.isEmpty {
+                    let picker = Picker(kind.optionLabel, selection: $option) {
+                        ForEach(kind.options, id: \.self) { Text($0).tag($0) }
                     }
-                    .pickerStyle(.segmented)
+                    if kind.options.count > 3 { picker.pickerStyle(.menu) }
+                    else { picker.pickerStyle(.segmented) }
                 }
-                Text(kind.subtitle(tracks: tracks))
+                Text(kind.subtitle(option: option))
                     .font(.system(size: 10))
                     .foregroundStyle(palette.color(.dim))
                 LabeledContent("File name") {
@@ -226,15 +229,17 @@ struct NewImageSheet: View {
                 LabeledContent("Disk name") {
                     TextField("new disk", text: $diskName).textFieldStyle(.roundedBorder)
                 }
-                LabeledContent("Disk ID") {
-                    TextField("01", text: $diskID).textFieldStyle(.roundedBorder).frame(width: 60)
+                if kind.wantsDiskID {
+                    LabeledContent("Disk ID") {
+                        TextField("01", text: $diskID).textFieldStyle(.roundedBorder).frame(width: 60)
+                    }
                 }
             }
         }
         .onAppear { focused = true }
-        // Each format has its own track counts, so a choice made under one of
-        // them cannot be carried over to the next.
-        .onChange(of: kind) { _, new in tracks = new.defaultTracks }
+        // Each format has its own second choice, so one made under a different
+        // format cannot be carried over.
+        .onChange(of: kind) { _, new in option = new.defaultOption }
     }
 }
 
@@ -244,6 +249,8 @@ struct DiskHeaderSheet: View {
     let palette: Palette
     @State var name: String
     @State var id: String
+    /// An Amiga volume has a name and nowhere to put an ID.
+    var wantsID: Bool = true
     let onCancel: () -> Void
     let onConfirm: (String, String) -> Void
     @FocusState private var focused: Bool
@@ -261,10 +268,14 @@ struct DiskHeaderSheet: View {
                         .focused($focused)
                         .onSubmit { onConfirm(name, id) }
                 }
-                LabeledContent("Disk ID") {
-                    TextField("", text: $id).textFieldStyle(.roundedBorder).frame(width: 60)
+                if wantsID {
+                    LabeledContent("Disk ID") {
+                        TextField("", text: $id).textFieldStyle(.roundedBorder).frame(width: 60)
+                    }
                 }
-                Text("The name appears in the reverse-video line at the top of a directory listing.")
+                Text(wantsID
+                     ? "The name appears in the reverse-video line at the top of a directory listing."
+                     : "The name appears at the top of the panel, the way a volume is named.")
                     .font(.system(size: 10))
                     .foregroundStyle(palette.color(.dim))
             }

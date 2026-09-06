@@ -23,9 +23,7 @@ final class ADFImage: DiskImage {
         }
         store = MemoryBlockStore(bytes: [UInt8](data), blockSize: 512, url: url)
         volume = try AmigaVolume(store: store)
-        // Writing arrives with the code that maintains a bitmap and a hash
-        // chain; until then an ADF is opened to be read and copied out of.
-        canWrite = false
+        canWrite = FileManager.default.isWritableFile(atPath: url.path)
     }
 
     // MARK: - What the panel shows
@@ -37,6 +35,10 @@ final class ADFImage: DiskImage {
     var diskName: [UInt8] { volume.volumeName }
     /// An Amiga volume has a name and no ID.
     var diskID: [UInt8]? { nil }
+    var displayDiskName: String { NameEncoding.latin1.text(volume.volumeName) }
+    func nameBytes(for text: String) -> [UInt8] {
+        AmigaVolume.legalName(NameEncoding.latin1.bytes(text))
+    }
 
     var formatName: String {
         let size = store.blockCount == 3520 ? "1760K" : "880K"
@@ -59,7 +61,7 @@ final class ADFImage: DiskImage {
         return Self.sizeFormatter.string(fromByteCount: bytes) + " free"
     }
 
-    private(set) var hasUnsavedChanges = false
+    var hasUnsavedChanges: Bool { store.isDirty }
 
     /// The one thing worth checking on sight: a root block whose longs do not
     /// sum to zero has been written by something that got it wrong, and every
@@ -82,25 +84,68 @@ final class ADFImage: DiskImage {
 
     // MARK: - Writing
 
-    func write(name: [UInt8], type: CBMFileType, data: Data) throws { throw DiskImageError.readOnly }
-    func delete(_ entry: ImageEntry) throws { throw DiskImageError.readOnly }
-    func rename(_ entry: ImageEntry, to name: [UInt8]) throws { throw DiskImageError.readOnly }
-    func setLocked(_ entry: ImageEntry, locked: Bool) throws { throw DiskImageError.readOnly }
-    func setDiskHeader(name: [UInt8], id: [UInt8]) throws { throw DiskImageError.readOnly }
+    func write(name: [UInt8], type: CBMFileType, data: Data) throws {
+        try write(name: name, type: type, data: data, at: [])
+    }
+
+    func write(name: [UInt8], type: CBMFileType, data: Data, at path: [String]) throws {
+        guard canWrite else { throw DiskImageError.readOnly }
+        try volume.createFile(name: name, data: data, in: volume.directoryBlock(at: path))
+    }
+
+    func delete(_ entry: ImageEntry) throws { try delete(entry, at: []) }
+
+    func delete(_ entry: ImageEntry, at path: [String]) throws {
+        guard canWrite else { throw DiskImageError.readOnly }
+        try volume.delete(entry.slot, in: volume.directoryBlock(at: path))
+    }
+
+    func rename(_ entry: ImageEntry, to name: [UInt8]) throws { try rename(entry, at: [], to: name) }
+
+    func rename(_ entry: ImageEntry, at path: [String], to name: [UInt8]) throws {
+        guard canWrite else { throw DiskImageError.readOnly }
+        try volume.rename(entry.slot, in: volume.directoryBlock(at: path), to: name)
+    }
+
+    func makeDirectory(name: [UInt8], at path: [String]) throws {
+        guard canWrite else { throw DiskImageError.readOnly }
+        try volume.createDirectory(name: name, in: volume.directoryBlock(at: path))
+    }
+
+    /// The write bit of the protection field, which is the nearest thing an
+    /// Amiga file has to the 1541's lock.
+    func setLocked(_ entry: ImageEntry, locked: Bool) throws {
+        guard canWrite else { throw DiskImageError.readOnly }
+        let block = try store.block(entry.slot)
+        let bits = AmigaVolume.long(block, store.blockSize - 192)
+        try volume.setProtection(entry.slot, bits: locked ? bits | 0x04 : bits & ~0x04)
+    }
+
+    /// A volume has a name and nothing to put an ID in, so the ID is dropped.
+    func setDiskHeader(name: [UInt8], id: [UInt8]) throws {
+        guard canWrite else { throw DiskImageError.readOnly }
+        try volume.setVolumeName(name)
+    }
+
+    /// A hash table has no order to rearrange, and a directory has no room for
+    /// a row that is not an entry.
     func moveEntry(_ entry: ImageEntry, by offset: Int) throws { throw DiskImageError.unsupportedFormat }
     func addDecorativeEntry(name: [UInt8], after entry: ImageEntry?) throws {
         throw DiskImageError.unsupportedFormat
     }
 
-    func save() throws {
-        guard hasUnsavedChanges else { return }
-        try store.flush()
-        hasUnsavedChanges = false
-    }
+    func save() throws { try store.flush() }
 
     func reload() throws {
         try store.reload()
         volume = try AmigaVolume(store: store)
-        hasUnsavedChanges = false
+    }
+
+    // MARK: - Formatting a blank image
+
+    /// Write an empty 880K floppy image.
+    static func createBlank(variant: AmigaVolume.Variant, name: [UInt8], at url: URL) throws {
+        let bytes = AmigaVolume.format(blockCount: doubleDensity / 512, variant: variant, name: name)
+        try Data(bytes).write(to: url, options: .withoutOverwriting)
     }
 }

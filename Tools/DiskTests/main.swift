@@ -481,6 +481,117 @@ do {
     print("  FAIL Amiga ADF: \(error)"); failures += 1
 }
 
+// --- Writing an Amiga volume ------------------------------------------------
+print("\n=== Amiga ADF write")
+for option in NewImageFormat.adf.options {
+    let variant = NewImageFormat.amigaVariant(option)
+    let tag = option.replacingOccurrences(of: " ", with: "_")
+    let url = URL(fileURLWithPath: "\(scratch)/blank-\(tag).adf")
+    try? FileManager.default.removeItem(at: url)
+    do {
+        try ADFImage.createBlank(variant: variant,
+                                 name: NameEncoding.latin1.bytes("Test Disk"), at: url)
+        let image = try ADFImage(url: url)
+        // 1758 blocks, less the root and the bitmap, less one more for the
+        // root's own cache on a file system that keeps one.
+        let empty = variant.hasDirCache ? 1755 : 1756
+        check(image.blocksFree == empty, "\(option) fresh: \(image.blocksFree) blocks free (want \(empty))")
+        check(image.entries.isEmpty, "\(option) fresh volume is empty")
+        check(image.displayDiskName == "Test Disk", "\(option) names its volume")
+        check(image.integrityNote == nil, "\(option) root block checksum")
+
+        // Sizes that straddle each boundary: an OFS data block holds 488 bytes
+        // and an FFS one 512, and a pointer table runs out after 72 of them.
+        var written: [String: Data] = [:]
+        for (i, size) in [0, 1, 487, 488, 512, 513, 35_136, 36_865, 90_000].enumerated() {
+            let payload = Data((0..<size).map { UInt8(($0 &* 31 &+ i) & 0xFF) })
+            let name = "file\(i)"
+            try image.write(name: NameEncoding.latin1.bytes(name), type: .prg, data: payload, at: [])
+            written[name] = payload
+        }
+        try image.makeDirectory(name: NameEncoding.latin1.bytes("Drawer"), at: [])
+        try image.makeDirectory(name: NameEncoding.latin1.bytes("Deeper"), at: ["Drawer"])
+        try image.write(name: NameEncoding.latin1.bytes("buried"), type: .prg,
+                        data: Data("hello from the bottom".utf8), at: ["Drawer", "Deeper"])
+        try image.save()
+
+        let reread = try ADFImage(url: url)
+        check(reread.entries.count == written.count + 1, "\(option) \(reread.entries.count) entries after a save")
+        var intact = true
+        for entry in reread.entries where !entry.isDirectory {
+            if try reread.read(entry, at: []) != written[entry.displayName] { intact = false }
+        }
+        check(intact, "\(option) every file round trips through a save and reopen")
+        let buried = try reread.entries(at: ["Drawer", "Deeper"])
+        check(buried.count == 1, "\(option) a file two directories down")
+        check(String(decoding: try reread.read(buried[0], at: ["Drawer", "Deeper"]), as: UTF8.self)
+              == "hello from the bottom", "\(option) and it reads back")
+        check(reread.integrityNote == nil, "\(option) still consistent after writing")
+
+        // A rename changes the hash, so the entry moves to a different chain
+        // and has to be findable under the new name and gone under the old.
+        if let target = reread.entries.first(where: { $0.displayName == "file3" }) {
+            try reread.rename(target, at: [], to: NameEncoding.latin1.bytes("Renamed"))
+            let names = reread.entries.map(\.displayName)
+            check(names.contains("Renamed") && !names.contains("file3"),
+                  "\(option) a rename moves the entry between hash chains")
+            let moved = reread.entries.first { $0.displayName == "Renamed" }!
+            check(try reread.read(moved, at: []) == written["file3"], "\(option) and its bytes are untouched")
+            try reread.rename(moved, at: [], to: NameEncoding.latin1.bytes("file3"))
+        } else {
+            check(false, "\(option) could not find a file to rename")
+        }
+
+        // The cache AmigaDOS trusts over the directory has to agree with it.
+        if variant.hasDirCache {
+            let volume = try AmigaVolume(store: MemoryBlockStore(url: url, blockSize: 512))
+            var agrees = true
+            for path in [[], ["Drawer"], ["Drawer", "Deeper"]] {
+                let listed = Set(try volume.entries(at: path).map(\.displayName))
+                let cached = Set(try volume.cachedNames(of: volume.directoryBlock(at: path)))
+                if listed != cached { agrees = false }
+            }
+            check(agrees, "\(option) the directory cache matches the directory")
+        }
+
+        // Emptying the volume has to hand back exactly what was taken.
+        for entry in try reread.entries(at: ["Drawer", "Deeper"]) { try reread.delete(entry, at: ["Drawer", "Deeper"]) }
+        for entry in try reread.entries(at: ["Drawer"]) { try reread.delete(entry, at: ["Drawer"]) }
+        for entry in reread.entries { try reread.delete(entry, at: []) }
+        check(reread.entries.isEmpty, "\(option) empty again")
+        check(reread.blocksFree == empty, "\(option) all blocks reclaimed (\(reread.blocksFree))")
+    } catch {
+        print("  FAIL \(option): \(error)"); failures += 1
+    }
+}
+
+// A directory with something in it must not go, the way AmigaDOS insists.
+do {
+    let url = URL(fileURLWithPath: "\(scratch)/notempty.adf")
+    try? FileManager.default.removeItem(at: url)
+    try ADFImage.createBlank(variant: NewImageFormat.amigaVariant("FFS"),
+                             name: NameEncoding.latin1.bytes("Test"), at: url)
+    let image = try ADFImage(url: url)
+    try image.makeDirectory(name: NameEncoding.latin1.bytes("Drawer"), at: [])
+    try image.write(name: NameEncoding.latin1.bytes("inside"), type: .prg,
+                    data: Data([1, 2, 3]), at: ["Drawer"])
+    do {
+        try image.delete(image.entries[0], at: [])
+        check(false, "a directory with a file in it was deleted anyway")
+    } catch {
+        check("\(error)".contains("still has something") || error is DiskImageError,
+              "a directory is not deleted while something is in it")
+    }
+    // And a name that is already taken is refused.
+    do {
+        try image.write(name: NameEncoding.latin1.bytes("inside"), type: .prg,
+                        data: Data([9]), at: ["Drawer"])
+        check(false, "a duplicate name was accepted")
+    } catch { check(true, "a name already in the directory is refused") }
+} catch {
+    print("  FAIL ADF rules: \(error)"); failures += 1
+}
+
 // --- The widened image model ------------------------------------------------
 print("\n=== image model")
 do {

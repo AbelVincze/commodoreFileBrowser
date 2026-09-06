@@ -429,16 +429,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// What to call a file being written into an image. A Commodore disk wants
-    /// the type as a suffix dropped and the name made legal for CBM DOS; an
-    /// Amiga volume takes the name as it stands.
+    /// What to call a file being written into an image. A Commodore disk keeps
+    /// the type in the extension, so the name loses it on the way in; an Amiga
+    /// volume takes the name as it stands.
     private func imageName(for payload: Payload, renamedTo renameTo: String?,
                            in image: DiskImage) -> [UInt8] {
         if image.listingStyle == .petscii {
-            return renameTo.map { PETSCII.cbmName(fromASCII: ($0 as NSString).deletingPathExtension) }
+            return renameTo.map { image.nameBytes(for: ($0 as NSString).deletingPathExtension) }
                 ?? payload.cbmName
         }
-        return NameEncoding.latin1.bytes(renameTo ?? payload.hostName)
+        return image.nameBytes(for: renameTo ?? payload.hostName)
     }
 
     // MARK: - Copy / move
@@ -603,18 +603,28 @@ final class AppModel: ObservableObject {
     // MARK: - New folder / image / header
 
     func beginMakeFolder() {
-        guard case .directory = activePanel.location else {
-            alertMessage = "Folders can only be created on the file system."
-            return
+        switch activePanel.location {
+        case .directory:
+            sheet = .makeFolder
+        case .image where activePanel.image?.supportsDirectories == true:
+            sheet = .makeFolder
+        default:
+            alertMessage = "This image has no directories, so there is nowhere to put a folder."
         }
-        sheet = .makeFolder
     }
 
     func performMakeFolder(named name: String) {
-        guard case .directory(let url) = activePanel.location else { return }
         do {
-            try FileManager.default.createDirectory(at: url.appendingPathComponent(name),
-                                                    withIntermediateDirectories: false)
+            switch activePanel.location {
+            case .directory(let url):
+                try FileManager.default.createDirectory(at: url.appendingPathComponent(name),
+                                                        withIntermediateDirectories: false)
+            case .image(_, let path):
+                guard let image = activePanel.image else { return }
+                try image.makeDirectory(name: image.nameBytes(for: name), at: path)
+            case .volumes:
+                return
+            }
             finishOperation(verb: "Created", count: 1, skipped: 0, error: nil)
         } catch { fail(error) }
     }
@@ -627,16 +637,23 @@ final class AppModel: ObservableObject {
         sheet = .newImage
     }
 
-    func performNewImage(kind: CBMDiskImage.BlankFormat, tracks: Int, fileName: String,
+    func performNewImage(kind: NewImageFormat, option: String, fileName: String,
                          diskName: String, diskID: String) {
         guard case .directory(let dir) = activePanel.location else { return }
         var name = fileName
         if !name.lowercased().hasSuffix(".\(kind.fileExtension)") { name += ".\(kind.fileExtension)" }
+        let url = dir.appendingPathComponent(name)
         do {
-            try CBMDiskImage.createBlank(kind, tracks: tracks,
-                                         name: PETSCII.cbmName(fromASCII: diskName),
-                                         id: PETSCII.petscii(fromASCII: diskID.isEmpty ? "01" : diskID),
-                                         at: dir.appendingPathComponent(name))
+            if let cbm = kind.cbm {
+                try CBMDiskImage.createBlank(cbm, tracks: Int(option),
+                                             name: PETSCII.cbmName(fromASCII: diskName),
+                                             id: PETSCII.petscii(fromASCII: diskID.isEmpty ? "01" : diskID),
+                                             at: url)
+            } else {
+                try ADFImage.createBlank(variant: NewImageFormat.amigaVariant(option),
+                                         name: NameEncoding.latin1.bytes(diskName),
+                                         at: url)
+            }
             finishOperation(verb: "Created", count: 1, skipped: 0, error: nil)
         } catch { fail(error) }
     }
@@ -652,7 +669,7 @@ final class AppModel: ObservableObject {
     func performEditHeader(name: String, id: String) {
         guard let image = activePanel.image else { return }
         do {
-            try image.setDiskHeader(name: PETSCII.cbmName(fromASCII: name),
+            try image.setDiskHeader(name: image.nameBytes(for: name),
                                     id: PETSCII.petscii(fromASCII: id))
             activePanel.refreshImage()
             statusMessage = "Disk header updated"

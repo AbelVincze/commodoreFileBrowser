@@ -83,6 +83,7 @@ enum DiskImageError: LocalizedError {
     case readOnly
     case fileNotFound
     case nameExists(String)
+    case directoryNotEmpty(String)
 
     var errorDescription: String? {
         switch self {
@@ -93,6 +94,7 @@ enum DiskImageError: LocalizedError {
         case .readOnly: return "This image cannot be written to."
         case .fileNotFound: return "The file no longer exists in this image."
         case .nameExists(let n): return "\"\(n)\" already exists in this image."
+        case .directoryNotEmpty(let n): return "\"\(n)\" still has something in it."
         }
     }
 }
@@ -130,6 +132,10 @@ protocol DiskImage: AnyObject {
     // that lives only in the extension is chosen by the static type, so through
     // this protocol the default would be the only thing ever called.
     var listingStyle: ListingStyle { get }
+    /// The volume name as text, and back again — the sheet that edits it works
+    /// in strings, and the two families spell a name in different bytes.
+    var displayDiskName: String { get }
+    func nameBytes(for text: String) -> [UInt8]
     var usableBytesPerBlock: Int { get }
     var freeDescription: String { get }
     var supportsDirectories: Bool { get }
@@ -147,6 +153,8 @@ protocol DiskImage: AnyObject {
 /// here was until the Amiga ones arrived.
 extension DiskImage {
     var listingStyle: ListingStyle { .petscii }
+    var displayDiskName: String { PETSCII.ascii(PETSCII.trimPadding(diskName)) }
+    func nameBytes(for text: String) -> [UInt8] { PETSCII.cbmName(fromASCII: text) }
     /// Payload bytes in one block, for sizing an entry the directory only
     /// counts in blocks. 254 on a CBM disk: two of the 256 are the next link.
     var usableBytesPerBlock: Int { 254 }
@@ -167,6 +175,58 @@ extension DiskImage {
     }
     func makeDirectory(name: [UInt8], at path: [String]) throws {
         throw DiskImageError.unsupportedFormat
+    }
+}
+
+/// A blank image `F2` will make. The Commodore ones are geometries of one
+/// format; the Amiga one is a file system choice instead, so the second picker
+/// in the sheet is whatever that format has two of.
+enum NewImageFormat: String, CaseIterable, Identifiable {
+    case d64 = "D64", d67 = "D67", d71 = "D71", d81 = "D81"
+    case d80 = "D80", d82 = "D82", adf = "ADF"
+
+    var id: String { rawValue }
+    var fileExtension: String { rawValue.lowercased() }
+
+    /// The Commodore formatter's own kind, for the six that are CBM disks.
+    var cbm: CBMDiskImage.BlankFormat? { CBMDiskImage.BlankFormat(rawValue: rawValue) }
+
+    /// Only an Amiga volume has an ID-less header.
+    var wantsDiskID: Bool { self != .adf }
+
+    var optionLabel: String { self == .adf ? "File system" : "Tracks" }
+
+    /// The second choice, where the format has one. Empty means there is
+    /// nothing to ask: one size, one file system.
+    var options: [String] {
+        switch self {
+        case .d64: return ["35", "40", "42"]
+        case .adf: return ["OFS", "FFS", "OFS international", "FFS international",
+                           "OFS + dir cache", "FFS + dir cache"]
+        default: return []
+        }
+    }
+
+    var defaultOption: String { options.first ?? "" }
+
+    /// The variant an option names, for the Amiga case.
+    static func amigaVariant(_ option: String) -> AmigaVolume.Variant {
+        AmigaVolume.Variant(dosFlags: UInt8(["OFS": 0, "FFS": 1,
+                                             "OFS international": 2, "FFS international": 3,
+                                             "OFS + dir cache": 4, "FFS + dir cache": 5][option] ?? 1))
+            ?? AmigaVolume.Variant(dosFlags: 1)!
+    }
+
+    func subtitle(option: String) -> String {
+        if self == .adf {
+            let variant = Self.amigaVariant(option)
+            // Two blocks of the 1758 go on the root and the bitmap, and a
+            // cached file system spends one more on the root's cache.
+            let used = variant.hasDirCache ? 3 : 2
+            return "Amiga 880K floppy - \(variant.name), \(1758 - used) blocks free"
+        }
+        guard let cbm else { return "" }
+        return cbm.subtitle(tracks: Int(option) ?? cbm.defaultTracks)
     }
 }
 

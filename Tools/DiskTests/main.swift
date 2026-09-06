@@ -376,6 +376,111 @@ do {
     print("  FAIL navigation: \(error)"); failures += 1
 }
 
+/// The bare bones of an Amiga volume: enough of a boot block and a root block
+/// for one to open, so that the parts that depend only on the file system
+/// variant — the name hash, above all — can be exercised without a disk.
+func blankVolumeBytes(international: Bool) -> [UInt8] {
+    var bytes = [UInt8](repeating: 0, count: 1760 * 512)
+    bytes[0] = 0x44; bytes[1] = 0x4F; bytes[2] = 0x53      // "DOS"
+    bytes[3] = international ? 2 : 0
+    let root = 880 * 512
+    bytes[root + 3] = 2                                    // T_HEADER
+    bytes[root + 511] = 1                                  // ST_ROOT
+    return bytes
+}
+
+// --- Amiga volumes ----------------------------------------------------------
+print("\n=== Amiga ADF")
+do {
+    // Real disks, when this machine has some. There is no ADF in sample_images
+    // — an 880K image each is a lot to keep — so the checks that need one look
+    // for a collection and say so when there is none.
+    let floppies = NSString(string: "~/Emulation/Amiga/Floppys").expandingTildeInPath
+    let names = ((try? FileManager.default.contentsOfDirectory(atPath: floppies)) ?? [])
+        .filter { $0.lowercased().hasSuffix(".adf") }.sorted()
+
+    if names.isEmpty {
+        print("  --   no ADF collection on this machine, skipping the disk checks")
+    } else {
+        var volumes = 0, loaders = 0, failures = 0
+        var files = 0, wrongLength = 0, freeBlocksInUse = 0
+        var headerBlocks = 0, badHeaderSum = 0
+        var ofsBlocks = 0, ofsOutOfOrder = 0, badDataSum = 0
+
+        for name in names {
+            let url = URL(fileURLWithPath: "\(floppies)/\(name)")
+            let image: ADFImage
+            do { image = try ADFImage(url: url) } catch {
+                let why = (error as? LocalizedError)?.errorDescription ?? ""
+                if why.contains("no AmigaDOS") { loaders += 1 } else { failures += 1 }
+                continue
+            }
+            volumes += 1
+            let volume = try AmigaVolume(store: MemoryBlockStore(url: url, blockSize: 512))
+
+            func walk(_ path: [String], _ depth: Int) {
+                guard depth < 8, let list = try? image.entries(at: path) else { return }
+                for entry in list {
+                    if let block = try? volume.store.block(entry.slot) {
+                        headerBlocks += 1
+                        if AmigaVolume.long(block, 20) != AmigaVolume.headerChecksum(block, at: 20) {
+                            badHeaderSum += 1
+                        }
+                    }
+                    if entry.isDirectory { walk(path + [entry.displayName], depth + 1); continue }
+                    guard let data = try? image.read(entry, at: path) else { continue }
+                    files += 1
+                    if data.count != entry.byteSize { wrongLength += 1 }
+                    for block in (try? volume.dataBlocks(of: entry.slot)) ?? [] {
+                        if (try? volume.isFree(block)) == true { freeBlocksInUse += 1 }
+                        // An OFS data block names the file it belongs to and
+                        // its own place in the file, so the order this reads
+                        // them in can be checked against the blocks themselves.
+                        guard !volume.variant.isFFS, let d = try? volume.store.block(block) else { continue }
+                        ofsBlocks += 1
+                        if AmigaVolume.signed(d, 4) != entry.slot { ofsOutOfOrder += 1 }
+                        if AmigaVolume.long(d, 20) != AmigaVolume.headerChecksum(d, at: 20) { badDataSum += 1 }
+                    }
+                }
+            }
+            walk([], 0)
+        }
+
+        check(failures == 0, "\(names.count) disks: \(volumes) volumes, \(loaders) with no file system, \(failures) unexplained")
+        check(volumes > 0, "at least one volume was read")
+        check(wrongLength == 0, "\(files) files came out the length the directory states")
+        check(freeBlocksInUse == 0, "no file holds a block the bitmap calls free")
+        check(badHeaderSum == 0, "\(headerBlocks) header blocks pass their checksum")
+        check(ofsOutOfOrder == 0, "\(ofsBlocks) OFS data blocks name the file they belong to")
+        check(badDataSum == 0, "and pass their own checksum")
+    }
+
+    // Hashing is what finds a name in a directory, and the two rules disagree
+    // exactly where a Latin-1 letter has an upper case form.
+    let plain = try? AmigaVolume(store: MemoryBlockStore(bytes: blankVolumeBytes(international: false),
+                                                        blockSize: 512, url: nil))
+    let intl = try? AmigaVolume(store: MemoryBlockStore(bytes: blankVolumeBytes(international: true),
+                                                       blockSize: 512, url: nil))
+    if let plain, let intl {
+        let lower = NameEncoding.latin1.bytes("test")
+        let upper = NameEncoding.latin1.bytes("TEST")
+        check(plain.hash(lower) == plain.hash(upper), "a name hashes the same in either case")
+        let accented = NameEncoding.latin1.bytes("\u{e4}bc")     // ä
+        let capital = NameEncoding.latin1.bytes("\u{c4}bc")      // Ä
+        check(intl.hash(accented) == intl.hash(capital),
+              "the international rule folds an accented letter")
+        check(plain.hash(accented) != plain.hash(capital),
+              "and the plain rule leaves it alone, as its file system does")
+        check(plain.hash(NameEncoding.latin1.bytes("Startup-Sequence")) < 72,
+              "a hash lands inside the table")
+    } else {
+        print("  FAIL could not build a volume to hash against")
+        failures += 1
+    }
+} catch {
+    print("  FAIL Amiga ADF: \(error)"); failures += 1
+}
+
 // --- The widened image model ------------------------------------------------
 print("\n=== image model")
 do {

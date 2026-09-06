@@ -124,6 +124,22 @@ protocol DiskImage: AnyObject {
     func addDecorativeEntry(name: [UInt8], after entry: ImageEntry?) throws
     func save() throws
     func reload() throws
+
+    // Everything below has a default in the extension that follows. They are
+    // named here as well so that a format can actually replace one: a member
+    // that lives only in the extension is chosen by the static type, so through
+    // this protocol the default would be the only thing ever called.
+    var listingStyle: ListingStyle { get }
+    var usableBytesPerBlock: Int { get }
+    var freeDescription: String { get }
+    var supportsDirectories: Bool { get }
+
+    func entries(at path: [String]) throws -> [ImageEntry]
+    func read(_ entry: ImageEntry, at path: [String]) throws -> Data
+    func write(name: [UInt8], type: CBMFileType, data: Data, at path: [String]) throws
+    func delete(_ entry: ImageEntry, at path: [String]) throws
+    func rename(_ entry: ImageEntry, at path: [String], to name: [UInt8]) throws
+    func makeDirectory(name: [UInt8], at path: [String]) throws
 }
 
 /// What a format does not have to say for itself. The defaults describe a flat
@@ -156,7 +172,8 @@ extension DiskImage {
 
 enum DiskImageFactory {
     static let supportedExtensions: Set<String> = ["d64", "d67", "d71", "d81",
-                                                   "d80", "d82", "x64", "t64"]
+                                                   "d80", "d82", "x64", "t64",
+                                                   "adf"]
 
     static func isImage(_ url: URL) -> Bool {
         supportedExtensions.contains(url.pathExtension.lowercased())
@@ -167,6 +184,7 @@ enum DiskImageFactory {
         case "d64", "d67", "d71", "d81", "d80", "d82", "x64":
             return try CBMDiskImage(url: url)
         case "t64": return try T64Image(url: url)
+        case "adf": return try ADFImage(url: url)
         default: throw DiskImageError.unsupportedFormat
         }
     }

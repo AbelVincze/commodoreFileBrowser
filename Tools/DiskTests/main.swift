@@ -592,6 +592,159 @@ do {
     print("  FAIL ADF rules: \(error)"); failures += 1
 }
 
+// --- Amiga hard disk images -------------------------------------------------
+print("\n=== Amiga HDF")
+
+/// A hardfile with a Rigid Disk Block and the partitions described, each one
+/// formatted. Built here rather than kept as a sample: a useful one is
+/// megabytes, and every field in it matters more than its contents do.
+func makeHardfile(at url: URL, blockSize: Int,
+                  partitions: [(name: String, cylinders: Int, dosType: UInt32)]) throws {
+    let surfaces = 2, blocksPerTrack = 32
+    let perCylinder = surfaces * blocksPerTrack
+    let reserved = 2
+    let total = reserved + partitions.reduce(0) { $0 + $1.cylinders }
+    var bytes = [UInt8](repeating: 0, count: total * perCylinder * blockSize)
+    func put(_ o: Int, _ v: Int) { AmigaVolume.setLong(&bytes, o, v) }
+
+    put(0, 0x5244_534B)                              // "RDSK"
+    put(4, 64); put(12, 7)
+    put(16, blockSize); put(24, -1)
+    put(28, 1)                                       // the partition list starts at block 1
+    put(32, -1); put(36, -1)
+    put(64, total); put(68, blocksPerTrack); put(72, surfaces)
+
+    var lowCyl = reserved
+    for (i, p) in partitions.enumerated() {
+        let base = (1 + i) * blockSize
+        put(base, 0x5041_5254)                       // "PART"
+        put(base + 4, 64); put(base + 12, 7)
+        put(base + 16, i + 1 < partitions.count ? 2 + i : -1)
+        put(base + 20, 1)
+        bytes[base + 36] = UInt8(p.name.count)
+        for (j, c) in Array(p.name.utf8).enumerated() { bytes[base + 37 + j] = c }
+        let env = base + 128
+        put(env, 16); put(env + 4, blockSize / 4)
+        put(env + 12, surfaces); put(env + 16, 1); put(env + 20, blocksPerTrack)
+        put(env + 24, 2); put(env + 36, lowCyl); put(env + 40, lowCyl + p.cylinders - 1)
+        put(env + 44, 30); put(env + 52, 0x7FFF_FFFF); put(env + 56, 0x7FFF_FFFE)
+        put(env + 64, Int(p.dosType))
+
+        if p.dosType & 0xFFFF_FF00 == 0x444F_5300,
+           let variant = AmigaVolume.Variant(dosFlags: UInt8(p.dosType & 0xFF)) {
+            let volume = try AmigaVolume.format(blockCount: p.cylinders * perCylinder,
+                                                blockSize: blockSize, variant: variant,
+                                                name: NameEncoding.latin1.bytes(p.name))
+            let at = lowCyl * perCylinder * blockSize
+            for (j, b) in volume.enumerated() { bytes[at + j] = b }
+        }
+        lowCyl += p.cylinders
+    }
+    try Data(bytes).write(to: url)
+}
+
+do {
+    let url = URL(fileURLWithPath: "\(scratch)/rdb.hdf")
+    try? FileManager.default.removeItem(at: url)
+    try makeHardfile(at: url, blockSize: 512,
+                     partitions: [("DH0", 80, 0x444F_5301),      // FFS
+                                  ("DH1", 40, 0x444F_5300),      // OFS
+                                  ("DH2", 20, 0x5346_5300)])     // SFS, which this cannot read
+
+    let image = try HDFImage(url: url)
+    check(image.isPartitioned, "the partition table was found")
+    let listed = image.entries
+    check(listed.count == 3, "all three partitions are listed")
+    check(listed.allSatisfy(\.isDirectory), "and each is something to go into")
+    check(listed.map(\.displayName) == ["DH0", "DH1", "DH2"], "named as the table names them")
+
+    for name in ["DH0", "DH1"] {
+        check(try image.entries(at: [name]).isEmpty, "\(name) starts empty")
+        let payload = Data((0..<9000).map { UInt8($0 & 0xFF) })
+        try image.write(name: NameEncoding.latin1.bytes("hello"), type: .prg, data: payload, at: [name])
+        try image.makeDirectory(name: NameEncoding.latin1.bytes("Drawer"), at: [name])
+        try image.write(name: NameEncoding.latin1.bytes("deep"), type: .prg,
+                        data: Data("inside".utf8), at: [name, "Drawer"])
+        try image.save()
+        let written = try image.entries(at: [name]).first { $0.displayName == "hello" }!
+        check(try image.read(written, at: [name]) == payload, "\(name) round trips a file")
+    }
+
+    // Reopened from disk, because the writes went a block at a time rather
+    // than by rewriting the file.
+    let again = try HDFImage(url: url)
+    for name in ["DH0", "DH1"] {
+        check(try again.entries(at: [name]).map(\.displayName).sorted() == ["Drawer", "hello"],
+              "\(name) still holds both entries after reopening")
+        check(try again.entries(at: [name, "Drawer"]).first?.displayName == "deep",
+              "\(name) still holds the buried file, so the partitions kept out of each other's way")
+    }
+    do {
+        _ = try again.entries(at: ["DH2"])
+        check(false, "a partition this cannot read was opened anyway")
+    } catch {
+        check("\((error as? LocalizedError)?.errorDescription ?? "")".contains("SFS"),
+              "a partition of another file system says so rather than being read as rubbish")
+    }
+
+    // A block number in an RDB counts in the drive's own blocks, which are not
+    // always 512 bytes, and the file system tables scale with them too.
+    let wideURL = URL(fileURLWithPath: "\(scratch)/rdb1024.hdf")
+    try? FileManager.default.removeItem(at: wideURL)
+    try makeHardfile(at: wideURL, blockSize: 1024, partitions: [("Work", 60, 0x444F_5301)])
+    let wide = try HDFImage(url: wideURL)
+    check(wide.isPartitioned, "a 1024 byte block hardfile is read")
+    let big = Data((0..<50_000).map { UInt8(($0 &* 7) & 0xFF) })
+    try wide.write(name: NameEncoding.latin1.bytes("wide"), type: .prg, data: big, at: ["Work"])
+    try wide.save()
+    let wideAgain = try HDFImage(url: wideURL)
+    check(try wideAgain.read(wideAgain.entries(at: ["Work"])[0], at: ["Work"]) == big,
+          "and round trips a 50 KB file through 1024 byte blocks")
+
+    // The point of the whole block store: a hard disk is not rewritten to
+    // change one directory entry.
+    let probeURL = URL(fileURLWithPath: "\(scratch)/probe.hdf")
+    try? FileManager.default.removeItem(at: probeURL)
+    try makeHardfile(at: probeURL, blockSize: 512, partitions: [("DH0", 80, 0x444F_5301)])
+    let before = try Data(contentsOf: probeURL)
+    let probe = try HDFImage(url: probeURL)
+    try probe.write(name: NameEncoding.latin1.bytes("one"), type: .prg, data: Data([1, 2, 3]), at: ["DH0"])
+    try probe.save()
+    let after = try Data(contentsOf: probeURL)
+    check(before.count == after.count, "the file did not change size")
+    var rewritten = 0
+    for b in 0..<(before.count / 512) where before[(b * 512)..<(b * 512 + 512)] != after[(b * 512)..<(b * 512 + 512)] {
+        rewritten += 1
+    }
+    check((1...12).contains(rewritten),
+          "writing one file rewrote \(rewritten) blocks of \(before.count / 512), not the file")
+
+    // And the hardfile on this machine, if there is one.
+    let realPath = NSString(string: "~/Emulation/Amiga/harddisks/system.HDF").expandingTildeInPath
+    if FileManager.default.fileExists(atPath: realPath) {
+        let real = try HDFImage(url: URL(fileURLWithPath: realPath))
+        check(!real.isPartitioned, "a raw hardfile is one volume with no partition table")
+        check(!real.entries.isEmpty, "and lists its root: \(real.entries.count) entries")
+        check(real.integrityNote == nil, "with a root block that checks out")
+        var files = 0, wrongLength = 0
+        func walk(_ path: [String], _ depth: Int) {
+            guard depth < 3, let list = try? real.entries(at: path) else { return }
+            for entry in list {
+                if entry.isDirectory { walk(path + [entry.displayName], depth + 1); continue }
+                guard let data = try? real.read(entry, at: path) else { continue }
+                files += 1
+                if data.count != entry.byteSize { wrongLength += 1 }
+            }
+        }
+        walk([], 0)
+        check(wrongLength == 0, "\(files) files on it come out the length it states")
+    } else {
+        print("  --   no hardfile on this machine, skipping the real one")
+    }
+} catch {
+    print("  FAIL Amiga HDF: \(error)"); failures += 1
+}
+
 // --- The widened image model ------------------------------------------------
 print("\n=== image model")
 do {

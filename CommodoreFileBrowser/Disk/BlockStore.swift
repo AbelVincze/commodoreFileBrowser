@@ -25,6 +25,68 @@ extension BlockStore {
     func holds(_ index: Int) -> Bool { index >= 0 && index < blockCount }
 }
 
+/// A window onto a file, read through a memory map and written a block at a
+/// time. A hard disk image runs to hundreds of megabytes, so the blocks that
+/// changed are the only ones that go back to disk — and a partition is the same
+/// file seen through a smaller window.
+final class FileBlockStore: BlockStore {
+    let blockSize: Int
+    let blockCount: Int
+    /// Where this window starts in the file. A raw hardfile starts at zero; a
+    /// partition starts wherever its first cylinder does.
+    private let byteOffset: Int
+    private let url: URL
+    private var mapped: Data
+    private var pending: [Int: [UInt8]] = [:]
+
+    var isDirty: Bool { !pending.isEmpty }
+
+    init(url: URL, blockSize: Int, byteOffset: Int = 0, blockCount: Int? = nil) throws {
+        self.url = url
+        self.blockSize = blockSize
+        self.byteOffset = byteOffset
+        self.mapped = try Data(contentsOf: url, options: .mappedIfSafe)
+        let available = (mapped.count - byteOffset) / blockSize
+        self.blockCount = min(blockCount ?? available, max(0, available))
+        guard self.blockCount > 0 else { throw DiskImageError.unsupportedFormat }
+    }
+
+    func block(_ index: Int) throws -> [UInt8] {
+        guard holds(index) else { throw DiskImageError.corrupt("block \(index) is outside the image") }
+        if let waiting = pending[index] { return waiting }
+        let start = mapped.startIndex + byteOffset + index * blockSize
+        return [UInt8](mapped[start..<(start + blockSize)])
+    }
+
+    func write(_ index: Int, _ bytes: [UInt8]) throws {
+        guard holds(index) else { throw DiskImageError.corrupt("block \(index) is outside the image") }
+        guard bytes.count == blockSize else {
+            throw DiskImageError.corrupt("a block is \(blockSize) bytes, not \(bytes.count)")
+        }
+        pending[index] = bytes
+    }
+
+    /// Seek to each changed block and put it back. Nothing else in the file is
+    /// read, rewritten or moved.
+    func flush() throws {
+        guard !pending.isEmpty else { return }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        for index in pending.keys.sorted() {
+            try handle.seek(toOffset: UInt64(byteOffset + index * blockSize))
+            handle.write(Data(pending[index]!))
+        }
+        try handle.synchronize()
+        pending.removeAll()
+        mapped = try Data(contentsOf: url, options: .mappedIfSafe)
+    }
+
+    func reload() throws {
+        pending.removeAll()
+        mapped = try Data(contentsOf: url, options: .mappedIfSafe)
+    }
+}
+
 /// The whole image in memory, written back in one piece.
 final class MemoryBlockStore: BlockStore {
     let blockSize: Int

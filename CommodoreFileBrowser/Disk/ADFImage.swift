@@ -145,7 +145,7 @@ final class ADFImage: DiskImage {
 
     /// Write an empty 880K floppy image.
     static func createBlank(variant: AmigaVolume.Variant, name: [UInt8], at url: URL) throws {
-        let bytes = AmigaVolume.format(blockCount: doubleDensity / 512, variant: variant, name: name)
+        let bytes = try AmigaVolume.format(blockCount: doubleDensity / 512, variant: variant, name: name)
         try Data(bytes).write(to: url, options: .withoutOverwriting)
     }
 }

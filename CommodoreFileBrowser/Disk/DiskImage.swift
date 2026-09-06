@@ -233,7 +233,7 @@ enum NewImageFormat: String, CaseIterable, Identifiable {
 enum DiskImageFactory {
     static let supportedExtensions: Set<String> = ["d64", "d67", "d71", "d81",
                                                    "d80", "d82", "x64", "t64",
-                                                   "adf"]
+                                                   "adf", "hdf"]
 
     static func isImage(_ url: URL) -> Bool {
         supportedExtensions.contains(url.pathExtension.lowercased())
@@ -245,6 +245,7 @@ enum DiskImageFactory {
             return try CBMDiskImage(url: url)
         case "t64": return try T64Image(url: url)
         case "adf": return try ADFImage(url: url)
+        case "hdf": return try HDFImage(url: url)
         default: throw DiskImageError.unsupportedFormat
         }
     }

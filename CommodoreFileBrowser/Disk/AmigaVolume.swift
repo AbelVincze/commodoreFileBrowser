@@ -400,7 +400,19 @@ final class AmigaVolume {
     }
 
     /// The bitmap blocks, from the root block and then any extension blocks.
+    /// Cached: the list is settled when the volume is formatted, and on a hard
+    /// disk it runs to a hundred blocks that would otherwise be re-read for
+    /// every bit looked at.
     func bitmapPages() throws -> [Int] {
+        if let cachedBitmapPages { return cachedBitmapPages }
+        let pages = try readBitmapPages()
+        cachedBitmapPages = pages
+        return pages
+    }
+
+    private var cachedBitmapPages: [Int]?
+
+    private func readBitmapPages() throws -> [Int] {
         let root = try store.block(rootBlock)
         var pages: [Int] = []
         let firstPage = hashTableOffset + tableSize * 4 + 4      // past the table and bm_flag
@@ -448,12 +460,22 @@ final class AmigaVolume {
     /// but those two.
     static func format(blockCount: Int, blockSize: Int = 512,
                        variant: Variant, name rawName: [UInt8],
-                       date: Date = Date()) -> [UInt8] {
+                       date: Date = Date()) throws -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: blockCount * blockSize)
         let volumeName = legalName(rawName)
         let root = blockCount / 2
-        let bitmap = root + 1
         let tableSize = blockSize / 4 - 56
+        let mappable = blockCount - 2
+
+        // One bitmap block per (blockSize/4 - 1) longs of bits. The root block
+        // has room to name twenty-five of them, and past that a volume needs a
+        // chain of bitmap extension blocks, which nothing here makes yet.
+        let bitsPerPage = (blockSize / 4 - 1) * 32
+        let pageCount = (mappable + bitsPerPage - 1) / bitsPerPage
+        guard pageCount <= 25 else {
+            throw DiskImageError.corrupt("a volume this large needs a bitmap this cannot write yet")
+        }
+        let pages = (0..<pageCount).map { root + 1 + $0 }
 
         bytes[0] = 0x44; bytes[1] = 0x4F; bytes[2] = 0x53      // "DOS"
         bytes[3] = variant.dosFlags
@@ -462,27 +484,32 @@ final class AmigaVolume {
 
         // Everything is free except the root block and the bitmap itself. The
         // two boot blocks are not in the bitmap at all: they are never free.
-        var map = [UInt8](repeating: 0, count: blockSize)
-        let mappable = blockCount - 2
+        var maps = [[UInt8]](repeating: [UInt8](repeating: 0, count: blockSize), count: pageCount)
         for index in 0..<mappable {
-            let o = 4 + (index / 32) * 4
-            var word = long(map, o)
-            word |= 1 << UInt32(index % 32)
-            setLong(&map, o, word)
+            let page = index / bitsPerPage
+            let within = index % bitsPerPage
+            let o = 4 + (within / 32) * 4
+            setLong(&maps[page], o, long(maps[page], o) | (1 << UInt32(within % 32)))
         }
-        for used in [root, bitmap] {
+        for used in [root] + pages {
             let index = used - 2
-            let o = 4 + (index / 32) * 4
-            setLong(&map, o, long(map, o) & ~(1 << UInt32(index % 32)))
+            let page = index / bitsPerPage
+            let within = index % bitsPerPage
+            let o = 4 + (within / 32) * 4
+            setLong(&maps[page], o, long(maps[page], o) & ~(1 << UInt32(within % 32)))
         }
-        applyHeaderChecksum(&map, at: 0)
-        for (i, b) in map.enumerated() { bytes[bitmap * blockSize + i] = b }
+        for (i, page) in pages.enumerated() {
+            applyHeaderChecksum(&maps[i], at: 0)
+            for (j, b) in maps[i].enumerated() { bytes[page * blockSize + j] = b }
+        }
 
         var rootBytes = [UInt8](repeating: 0, count: blockSize)
         setLong(&rootBytes, 0, BlockType.header)
         setLong(&rootBytes, 12, tableSize)                     // ht_size
         setLong(&rootBytes, 24 + tableSize * 4, -1)            // bm_flag: the map is valid
-        setLong(&rootBytes, 24 + tableSize * 4 + 4, bitmap)    // bm_pages[0]
+        for (i, page) in pages.enumerated() {
+            setLong(&rootBytes, 24 + tableSize * 4 + 4 + i * 4, page)
+        }
         let fields = dateFields(date)
         for offset in [blockSize - 92, blockSize - 40, blockSize - 28] {
             setLong(&rootBytes, offset, fields.days)
@@ -499,9 +526,9 @@ final class AmigaVolume {
         // goes on the disk.
         if variant.hasDirCache {
             let store = MemoryBlockStore(bytes: bytes, blockSize: blockSize, url: nil)
-            if let volume = try? AmigaVolume(store: store), (try? volume.refreshDirectory(root)) != nil {
-                return store.bytes
-            }
+            let volume = try AmigaVolume(store: store)
+            try volume.refreshDirectory(root)
+            return store.bytes
         }
         return bytes
     }

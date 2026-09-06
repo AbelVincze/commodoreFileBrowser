@@ -39,6 +39,13 @@ struct CommodoreFileBrowserApp: App {
         }
         CommandGroup(after: .newItem) {
             Divider()
+            // Handing a file to the system, never navigating: walking into a
+            // folder or an image is Return's job.
+            Button("Open") { model.openWithSystem() }
+                .keyboardShortcut("o", modifiers: .command)
+            Button("Show in Finder") { model.revealInFinder() }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+            Divider()
             Button("Copy to Other Panel") { model.beginTransfer(isMove: false) }
             Button("Move to Other Panel") { model.beginTransfer(isMove: true) }
             Button("Rename…") { model.beginRename() }

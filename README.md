@@ -50,8 +50,11 @@ because the names are never converted to ASCII for display.
 | `Tab` | switch panels |
 | `Space` | mark the file under the cursor |
 | `+` `-` `*` | mark all, unmark all, invert |
-| `Return` | enter a folder or an image, or play a file as music |
-| `⇧Return` | play, entering the addresses by hand |
+| `Return` | enter a folder or an image, or play a file that is a tune |
+| `⇧Return` | play anyway, entering the addresses by hand |
+| `⌘O` | open it with the app macOS uses for it |
+| `⌥⌘R` | show it in Finder |
+| right click | open, open with, show in Finder, and the panel's own commands |
 | `→` | enter a folder or an image — never goes up |
 | `←` or `Delete` | go up — saving the image on the way out |
 | `⌘D` | jump to the list of volumes |
@@ -397,6 +400,31 @@ writes only reaches track 35, so all three still report 664 blocks free and
 nothing here puts a file past track 35. That matches the drive: reaching those
 tracks needs a DOS that was extended to know about them, and the extended DOSes
 do not agree on where to keep their free counts.
+
+## The system
+
+`Return` walks into a folder or an image and plays a file that is a tune. It
+used to open the player for anything at all, which meant a text file produced a
+sheet asking for two hex addresses that were never going to exist; now it says
+so in the status line instead, and `⇧Return` still forces the player onto a file
+the browser cannot read as one.
+
+`⌘O` is the other half: it hands the row to the system, exactly as a double
+click in Finder would. On a `.d64` that is whatever opens `.d64` files on this
+machine — an emulator, rather than this listing, which is what `Return` is for.
+On a folder it is a Finder window. The two never overlap: `Return` navigates,
+`⌘O` hands over. `⌥⌘R` reveals the row in Finder.
+
+Right clicking a row gives both of those, an *Open With* list built from the
+applications macOS offers for that file, and the commands that were otherwise
+only on function keys — view, play, copy, move, rename, delete.
+
+A file inside a disk image is not a file the system can reach, so opening one
+writes a copy to a temporary folder and opens that. It is a copy: edits do not
+go back into the image. The menu says *Open Copy* rather than *Open*, and the
+copy is written read-only, so an editor reports it as locked instead of saving
+into a folder nobody will read again. *Show in Finder* on such a row reveals the
+image itself, the only thing that really exists.
 
 ## Commodore menu
 

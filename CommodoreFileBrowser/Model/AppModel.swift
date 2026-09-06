@@ -213,26 +213,106 @@ final class AppModel: ObservableObject {
         return true
     }
 
-    /// Return enters a folder, a volume or an image, and plays anything else.
+    /// Return enters a folder, a volume or an image, and plays a tune.
+    ///
+    /// Only a tune: it used to open the player for anything at all, so a text
+    /// file produced a sheet asking for two hex addresses that were never going
+    /// to exist. Handing a file to the system is `⌘O`, and the player can still
+    /// be forced onto a file the browser cannot read as one with ⇧Return.
     func activateItem() {
         guard let item = activePanel.currentItem else { return }
-        if item.kind.isNavigable { activePanel.open() } else { beginPlay(manual: false) }
+        if item.kind.isNavigable { activePanel.open() } else { beginPlay(manual: false, requireTune: true) }
     }
 
     /// `manual` skips detection, for a raw binary or when a guess is wrong.
-    func beginPlay(manual: Bool) {
+    /// `requireTune` backs out instead of opening the player when nothing was
+    /// detected, which is what Return wants and ⇧Return does not.
+    func beginPlay(manual: Bool, requireTune: Bool = false) {
         guard let item = activePanel.currentItem, item.isSelectable, item.kind != .folder else { return }
         do {
             let payload = try read(item, from: activePanel)
             let bytes = [UInt8](payload.data)
-            guard bytes.count > 2 else { alertMessage = "That file is too short to be a tune."; return }
+            guard bytes.count > 2 else {
+                if requireTune { statusMessage = Self.notATuneHint; return }
+                alertMessage = "That file is too short to be a tune."
+                return
+            }
+            let detected = manual ? nil : SIDTuneLoader.detect(name: item.title, data: bytes)
+            // Say what to press instead, since Return otherwise looks as though
+            // it did nothing at all.
+            if requireTune, detected == nil { statusMessage = Self.notATuneHint; return }
             playerRequest = SIDRequest(
                 name: item.title,
                 data: bytes,
-                detected: manual ? nil : SIDTuneLoader.detect(name: item.title, data: bytes),
+                detected: detected,
                 destination: exportDirectory)
             sheet = .player
         } catch { fail(error) }
+    }
+
+    private static let notATuneHint = "Not a recognised tune - ⇧⏎ for the player, ⌘O to open it"
+
+    // MARK: - Handing a file to the system
+
+    /// What ⌘O acts on: the row the menu was opened on, or the cursor.
+    private func target(_ item: PanelItem?) -> PanelItem? {
+        let chosen = item ?? activePanel.currentItem
+        return chosen?.isSelectable == true ? chosen : nil
+    }
+
+    /// Open it the way a double click in Finder would.
+    ///
+    /// Never navigates, whatever the row is. Walking into a folder or an image
+    /// is Return's job, and an image handed to the system is meant to reach the
+    /// emulator that opens `.d64` files rather than this listing.
+    func openWithSystem(_ item: PanelItem? = nil) {
+        guard let item = target(item) else { return }
+        do {
+            if let url = try hostURL(for: item) { HostOpener.open(url) }
+        } catch { fail(error) }
+    }
+
+    /// The same, with an application picked from the menu.
+    func openWithSystem(_ item: PanelItem? = nil, using application: URL) {
+        guard let item = target(item) else { return }
+        do {
+            if let url = try hostURL(for: item) { HostOpener.open(url, with: application) }
+        } catch { fail(error) }
+    }
+
+    /// Show it in Finder. An entry inside an image has no file of its own, so
+    /// what is revealed is the image holding it — the thing that does exist.
+    func revealInFinder(_ item: PanelItem? = nil) {
+        let chosen = item ?? activePanel.currentItem
+        if let url = chosen?.url, chosen?.kind != .cbmFile {
+            HostOpener.reveal(url)
+        } else if let container = activePanel.location.url {
+            HostOpener.reveal(container)
+        }
+    }
+
+    /// A path the system can open. Rows on the file system have one already;
+    /// an entry inside an image is written out to a temporary copy first.
+    private func hostURL(for item: PanelItem) throws -> URL? {
+        guard item.kind == .cbmFile else { return item.url }
+        let payload = try read(item, from: activePanel)
+        let folder = HostHandoff.temporaryFolder(for: activePanel.location.url)
+        let url = try HostHandoff.write(payload.data, named: payload.hostName, in: folder)
+        statusMessage = "Opened a copy of \(item.title) - edits do not go back into the image"
+        return url
+    }
+
+    /// Applications offered for a row. For an entry inside an image they come
+    /// from the name it would be given on the file system, so that building a
+    /// menu never writes a copy out.
+    func applications(for item: PanelItem) -> [URL] {
+        if item.kind == .cbmFile {
+            guard let entry = item.cbm else { return [] }
+            let name = PETSCII.hostFileName(entry.name, type: entry.type)
+            return HostOpener.applications(forExtension: (name as NSString).pathExtension)
+        }
+        guard let url = item.url else { return [] }
+        return HostOpener.applications(for: url)
     }
 
     /// Step to the neighbouring playable file and play it, so a disk of tunes

@@ -144,12 +144,12 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
-				ONLY_ACTIVE_ARCH = YES;
 				OBJROOT = "$(PROJECT_DIR)/build/Intermediates";
+				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
-				SYMROOT = "$(PROJECT_DIR)/build/Products";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SYMROOT = "$(PROJECT_DIR)/build/Products";
 			};
 			name = Debug;
 		};
@@ -170,8 +170,8 @@
 				MTL_FAST_MATH = YES;
 				OBJROOT = "$(PROJECT_DIR)/build/Intermediates";
 				SDKROOT = macosx;
-				SYMROOT = "$(PROJECT_DIR)/build/Products";
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SYMROOT = "$(PROJECT_DIR)/build/Products";
 			};
 			name = Release;
 		};

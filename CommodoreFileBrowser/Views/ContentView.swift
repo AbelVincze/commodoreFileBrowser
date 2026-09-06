@@ -101,6 +101,7 @@ struct ContentView: View {
     private func panel(_ p: PanelModel, side: PanelSide) -> some View {
         PanelView(panel: p,
                   settings: settings,
+                  model: model,
                   palette: palette,
                   isActive: model.activeSide == side,
                   status: model.statusMessage,

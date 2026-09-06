@@ -19,6 +19,8 @@ enum PanelLayout {
 struct PanelView: View {
     @ObservedObject var panel: PanelModel
     @ObservedObject var settings: SettingsStore
+    /// The row menu needs the whole command set, not the two closures below.
+    @ObservedObject var model: AppModel
     let palette: Palette
     let isActive: Bool
     /// Shown in the footer of the active panel.
@@ -180,6 +182,9 @@ struct PanelView: View {
                             .id(item.id)
                             .contentShape(Rectangle())
                             .onTapGesture { click(item) }
+                            .contextMenu {
+                                RowContextMenu(model: model, panel: panel, item: item)
+                            }
                     }
                 }
                 .padding(.vertical, 4)

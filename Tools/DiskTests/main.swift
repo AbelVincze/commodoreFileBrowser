@@ -658,6 +658,41 @@ do {
 
     csid_scope_enable(0)
 
+    // Handing a file inside an image to the system means writing a copy out
+    // first. It is a copy, and read-only so that stays true.
+    do {
+        let container = URL(fileURLWithPath: "\(scratch)/handoff.d64")
+        let folder = HostHandoff.temporaryFolder(for: container)
+        try? FileManager.default.removeItem(at: folder)
+
+        let payload = Data([0x01, 0x08, 0x41, 0x42, 0x43])
+        let url = try HostHandoff.write(payload, named: "a file.prg", in: folder)
+        check(url.deletingLastPathComponent() == folder, "the copy lands in the image's own folder")
+        check(folder.lastPathComponent == "handoff", "which is named after the image")
+        check((try Data(contentsOf: url)) == payload, "byte for byte what was read out")
+
+        let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        check(mode == 0o444, "written read-only, so an editor cannot save into it")
+
+        // Opening the same entry twice must hand back the same path rather
+        // than collecting numbered duplicates beside it.
+        let again = try HostHandoff.write(Data([0x09]), named: "a file.prg", in: folder)
+        check(again == url, "the second copy replaces the first")
+        check((try Data(contentsOf: again)) == Data([0x09]), "and holds the newer bytes")
+        let listing = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        check(listing.count == 1, "one file in the folder, not \(listing.count)")
+
+        // A CBM name can hold what a path cannot.
+        check(HostHandoff.safeName("a/b:c") == "a-b-c", "slashes and colons are replaced")
+        check(HostHandoff.safeName(".hidden") == "_hidden", "a leading dot cannot hide the copy")
+        check(HostHandoff.safeName("   ") == "unnamed", "an empty name still writes somewhere")
+
+        // The name comes from the same place the copy-out path uses.
+        let entryName = PETSCII.cbmName(fromASCII: "tune")
+        check(PETSCII.hostFileName(entryName, type: .prg) == "tune.prg",
+              "and it is the host name the copy-out path gives")
+    }
+
     // A D64 can be made at 35, 40 or 42 tracks. The extra ones are in the file
     // and reachable, but the BAM a 1541 writes stops at 35, so nothing is ever
     // put on them and the free count does not move.

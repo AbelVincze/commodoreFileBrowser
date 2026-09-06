@@ -69,7 +69,7 @@ because the names are never converted to ASCII for display.
 | `F8` | delete |
 | `F9` | rename |
 | `F10` | quit |
-| `Ctrl-Shift` | switch the Commodore font between upper and lower case |
+| `Ctrl-Shift` or `⇧⌘C` | switch the Commodore font between upper and lower case |
 | `⇧⌘.` | show hidden files |
 | `⌘↑` `⌘↓` | move an entry within an image directory |
 

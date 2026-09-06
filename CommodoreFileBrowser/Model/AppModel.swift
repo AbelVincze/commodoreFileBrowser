@@ -111,8 +111,11 @@ final class AppModel: ObservableObject {
     /// character ROM, the way Commodore+Shift does on a real machine. It is a
     /// modifier-only chord, so it arrives as a flagsChanged event rather than
     /// a key press.
+    ///
+    /// It works with a sheet open too. The character set is a display choice
+    /// rather than something a sheet owns, and the file viewer — where a PETSCII
+    /// listing is the whole point — is exactly where you want to reach for it.
     func handleFlags(_ event: NSEvent) {
-        guard sheet == nil else { return }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isChord = flags.contains(.control) && flags.contains(.shift)
             && !flags.contains(.command) && !flags.contains(.option)

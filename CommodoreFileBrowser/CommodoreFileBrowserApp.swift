@@ -71,7 +71,12 @@ struct CommodoreFileBrowserApp: App {
             Button("View File…") { model.beginView() }
             Button("View as Bitmap…") { model.beginView(bitmap: true) }
             Button("Play as SID…") { model.beginPlay(manual: false) }
-            Button("Switch Character Set (Ctrl-Shift)") { model.toggleCharacterSet() }
+            // Ctrl-Shift is the C64 gesture and is handled in the key monitor,
+            // but a modifier-only chord is at the mercy of anything the system
+            // has bound to those two keys — input source switching, most often.
+            // This is the route that cannot be taken away.
+            Button("Switch Character Set (or Ctrl-Shift)") { model.toggleCharacterSet() }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
             Divider()
             Button("Edit Disk Header…") { model.beginEditHeader() }
             Button("Add DEL Entry…") { model.sheet = .addDecoration }

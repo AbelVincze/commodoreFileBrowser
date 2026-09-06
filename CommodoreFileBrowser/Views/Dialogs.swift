@@ -518,7 +518,7 @@ struct HelpSheet: View {
         ("F9", "Rename"),
         ("F10", "Quit"),
         ("⌘D", "Jump to the list of volumes"),
-        ("Ctrl-Shift", "Switch the Commodore font between upper and lower case"),
+        ("Ctrl-Shift or ⇧⌘C", "Switch the Commodore font between upper and lower case"),
         ("⌘H", "Show or hide hidden files"),
         ("⌘↑ / ⌘↓", "Rearrange an entry inside a disk image")
     ]

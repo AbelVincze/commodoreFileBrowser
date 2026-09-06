@@ -376,14 +376,13 @@ struct SIDPlayerSheet: View {
             // These are what the sheet is for; everything above them is setup.
             HStack(spacing: 8) {
                 Button(action: playPause) {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .frame(width: 18)
+                    glyph(player.isPlaying ? "pause.fill" : "play.fill")
                 }
                 .keyboardShortcut(.defaultAction)
                 .help(player.isPlaying ? "Pause" : "Play")
 
                 Button(action: stopPlayback) {
-                    Image(systemName: "stop.fill").frame(width: 18)
+                    glyph("stop.fill")
                 }
                 .help("Stop and rewind to the beginning")
 
@@ -391,7 +390,7 @@ struct SIDPlayerSheet: View {
                 // action is what drives it: the tune runs ten times as fast for
                 // exactly as long as the mouse is down, wherever it is let go.
                 Button(action: {}) {
-                    Image(systemName: "forward.fill").frame(width: 18)
+                    glyph("forward.fill")
                 }
                 .disabled(!player.isPlaying)
                 .help("Hold to play at ten times speed")
@@ -429,6 +428,14 @@ struct SIDPlayerSheet: View {
             Button("Close", action: onClose).keyboardShortcut(.cancelAction)
         }
         .padding(14)
+    }
+
+    /// One box for every transport glyph. The symbols are not all the same
+    /// height — play stands a point taller than pause — so leaving the height
+    /// to the symbol made the row change size as the button changed, and the
+    /// centred sheet shift half a point under it.
+    private func glyph(_ name: String) -> some View {
+        Image(systemName: name).frame(width: 18, height: 12)
     }
 
     private var playTime: String {

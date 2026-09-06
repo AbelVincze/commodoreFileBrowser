@@ -25,19 +25,24 @@ final class T64Image: DiskImage {
     }
     var integrityNote: String? { nil }
     var diskName: [UInt8] { PETSCII.padded16(PETSCII.trimPadding(tapeName)) }
-    var diskID: [UInt8] { PETSCII.petscii(fromASCII: "t6 4t") }
+    /// A tape has no disk ID, and inventing one only put two syllables of
+    /// nonsense in the header line.
+    var diskID: [UInt8]? { nil }
+    /// With no block allocation to report, the size on disk is what is left.
+    var freeDescription: String { formatName }
 
-    var entries: [CBMEntry] {
+    var entries: [ImageEntry] {
         records.enumerated().map { index, r in
-            CBMEntry(slot: index,
-                     name: PETSCII.trimPadding(r.name),
-                     type: .prg,
-                     isSplat: false,
-                     isLocked: false,
-                     blocks: max(1, (r.payload.count + 2 + 253) / 254),
-                     startTrack: 0,
-                     startSector: 0,
-                     entryOffset: index)
+            ImageEntry(slot: index,
+                       name: PETSCII.trimPadding(r.name),
+                       type: .prg,
+                       isSplat: false,
+                       isLocked: false,
+                       blocks: max(1, (r.payload.count + 2 + 253) / 254),
+                       startTrack: 0,
+                       startSector: 0,
+                       entryOffset: index,
+                       byteSize: r.payload.count + 2)
         }
     }
 
@@ -102,7 +107,7 @@ final class T64Image: DiskImage {
     // MARK: - Contents
 
     /// Returns a PRG: the two byte load address followed by the body.
-    func read(_ entry: CBMEntry) throws -> Data {
+    func read(_ entry: ImageEntry) throws -> Data {
         guard entry.slot < records.count else { throw DiskImageError.fileNotFound }
         let r = records[entry.slot]
         var out = Data([UInt8(r.startAddress & 0xFF), UInt8(r.startAddress >> 8)])
@@ -125,21 +130,21 @@ final class T64Image: DiskImage {
         hasUnsavedChanges = true
     }
 
-    func delete(_ entry: CBMEntry) throws {
+    func delete(_ entry: ImageEntry) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         guard entry.slot < records.count else { throw DiskImageError.fileNotFound }
         records.remove(at: entry.slot)
         hasUnsavedChanges = true
     }
 
-    func rename(_ entry: CBMEntry, to name: [UInt8]) throws {
+    func rename(_ entry: ImageEntry, to name: [UInt8]) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         guard entry.slot < records.count else { throw DiskImageError.fileNotFound }
         records[entry.slot].name = PETSCII.padded16(PETSCII.trimPadding(name)).map { $0 == 0xA0 ? 0x20 : $0 }
         hasUnsavedChanges = true
     }
 
-    func setLocked(_ entry: CBMEntry, locked: Bool) throws {
+    func setLocked(_ entry: ImageEntry, locked: Bool) throws {
         throw DiskImageError.readOnly
     }
 
@@ -149,7 +154,7 @@ final class T64Image: DiskImage {
         hasUnsavedChanges = true
     }
 
-    func moveEntry(_ entry: CBMEntry, by delta: Int) throws {
+    func moveEntry(_ entry: ImageEntry, by delta: Int) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         let target = entry.slot + delta
         guard entry.slot < records.count, target >= 0, target < records.count else { return }
@@ -157,7 +162,7 @@ final class T64Image: DiskImage {
         hasUnsavedChanges = true
     }
 
-    func addDecorativeEntry(name: [UInt8], after entry: CBMEntry?) throws {
+    func addDecorativeEntry(name: [UInt8], after entry: ImageEntry?) throws {
         throw DiskImageError.unsupportedFormat
     }
 

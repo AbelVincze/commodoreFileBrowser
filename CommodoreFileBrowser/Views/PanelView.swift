@@ -101,7 +101,7 @@ struct PanelView: View {
     private var typeMarker: String {
         switch panel.location {
         case .volumes, .directory: return "FS"
-        case .image(let url): return url.pathExtension.uppercased()
+        case .image(let url, _): return url.pathExtension.uppercased()
         }
     }
 
@@ -143,24 +143,40 @@ struct PanelView: View {
 
     @ViewBuilder
     private var mainLine: some View {
-        if let image = panel.image {
+        if let image = panel.image, image.listingStyle == .petscii {
             PETSCIIText(petscii: PanelModel.headerLine(for: image),
                         color: palette.color(.header), zoom: settings.zoom,
                         font: settings.font, reverse: true)
         } else {
             HStack(spacing: 6) {
-                Image(systemName: panel.location == .volumes
-                      ? "externaldrive.connected.to.line.below" : "folder")
+                Image(systemName: headerIcon)
                     .font(.system(size: 10))
                     .foregroundStyle(palette.color(.dim))
-                Text(panel.headerTitle)
+                Text(headerText)
                     .font(.system(size: 12))
                     .foregroundStyle(palette.color(.header))
                     .lineLimit(1)
                     .truncationMode(.head)
             }
+            // Boxed to the height of a PETSCII line so the two panels, and the
+            // two kinds of image header, all sit at the same place.
             .frame(height: CGFloat(8 * settings.zoom))
         }
+    }
+
+    private var headerIcon: String {
+        if panel.image != nil { return "opticaldiscdrive.fill" }
+        return panel.location == .volumes ? "externaldrive.connected.to.line.below" : "folder"
+    }
+
+    /// An image drawn as text names its volume, since it has no reverse-video
+    /// header line to carry the name; the path inside it follows.
+    private var headerText: String {
+        guard let image = panel.image else { return panel.headerTitle }
+        let volume = image.diskName.isEmpty
+            ? panel.location.url?.lastPathComponent ?? ""
+            : NameEncoding.latin1.text(image.diskName).trimmingCharacters(in: .whitespaces)
+        return (["\(volume):"] + panel.location.imagePath).joined(separator: "/")
     }
 
     // MARK: - Listing
@@ -246,9 +262,9 @@ struct PanelRow: View {
         if isMarked { return palette.color(.marked) }
         switch item.kind {
         case .parent: return palette.color(.dim)
-        case .folder, .volume: return palette.color(.directory)
+        case .folder, .volume, .imageFolder: return palette.color(.directory)
         case .diskImage: return palette.color(.image)
-        case .cbmFile: return palette.color(.header)
+        case .imageFile: return palette.color(.header)
         case .file: return palette.color(.text)
         }
     }
@@ -258,13 +274,34 @@ struct PanelRow: View {
         return isActive ? palette.color(.cursorBackground) : palette.color(.cursorBackground).opacity(0.22)
     }
 
+    /// One trailing column of a row drawn as text.
+    private func column(_ text: String, width: CGFloat? = nil, minWidth: CGFloat? = nil) -> some View {
+        Text(text)
+            .font(.system(size: 10, design: .monospaced))
+            .lineLimit(1)
+            .foregroundStyle(isCursor && isActive ? palette.color(.cursorText).opacity(0.8)
+                                                  : palette.color(.dim))
+            .frame(width: width, alignment: .trailing)
+            .frame(minWidth: minWidth, alignment: .trailing)
+    }
+
+    /// Short enough to sit beside a name without crowding it, and the same on
+    /// both sides so the columns line up across the two panels.
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "dd-MMM-yy"
+        return f
+    }()
+
+    private static func dateText(_ date: Date) -> String { dateFormatter.string(from: date) }
+
     private var icon: String {
         switch item.kind {
         case .parent: return "arrow.turn.left.up"
         case .volume: return "externaldrive"
-        case .folder: return "folder.fill"
+        case .folder, .imageFolder: return "folder.fill"
         case .diskImage: return "opticaldiscdrive.fill"
-        case .file, .cbmFile: return "doc"
+        case .file, .imageFile: return "doc"
         }
     }
 
@@ -285,10 +322,14 @@ struct PanelRow: View {
                     .truncationMode(.middle)
                     .foregroundStyle(foreground)
                 Spacer(minLength: 8)
-                Text(item.detail)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(isCursor && isActive ? palette.color(.cursorText).opacity(0.8)
-                                                          : palette.color(.dim))
+                // Trailing columns, each at a width its content cannot outgrow,
+                // so the two panels read down the page as columns rather than
+                // as three ragged edges. The size is only a floor: a file big
+                // enough to need more room takes it from the name, which is the
+                // one field here that can be shortened without losing meaning.
+                column(item.detail, minWidth: 62)
+                if !item.flags.isEmpty { column(item.flags, width: 52) }
+                if let modified = item.modified { column(Self.dateText(modified), width: 58) }
             }
         }
         .padding(.horizontal, PanelLayout.inset)

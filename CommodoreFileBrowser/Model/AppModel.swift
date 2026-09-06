@@ -284,7 +284,7 @@ final class AppModel: ObservableObject {
     /// what is revealed is the image holding it — the thing that does exist.
     func revealInFinder(_ item: PanelItem? = nil) {
         let chosen = item ?? activePanel.currentItem
-        if let url = chosen?.url, chosen?.kind != .cbmFile {
+        if let url = chosen?.url, chosen?.kind.isInsideImage != true {
             HostOpener.reveal(url)
         } else if let container = activePanel.location.url {
             HostOpener.reveal(container)
@@ -294,7 +294,7 @@ final class AppModel: ObservableObject {
     /// A path the system can open. Rows on the file system have one already;
     /// an entry inside an image is written out to a temporary copy first.
     private func hostURL(for item: PanelItem) throws -> URL? {
-        guard item.kind == .cbmFile else { return item.url }
+        guard item.kind.isInsideImage else { return item.url }
         let payload = try read(item, from: activePanel)
         let folder = HostHandoff.temporaryFolder(for: activePanel.location.url)
         let url = try HostHandoff.write(payload.data, named: payload.hostName, in: folder)
@@ -306,10 +306,9 @@ final class AppModel: ObservableObject {
     /// from the name it would be given on the file system, so that building a
     /// menu never writes a copy out.
     func applications(for item: PanelItem) -> [URL] {
-        if item.kind == .cbmFile {
+        if item.kind.isInsideImage {
             guard let entry = item.cbm else { return [] }
-            let name = PETSCII.hostFileName(entry.name, type: entry.type)
-            return HostOpener.applications(forExtension: (name as NSString).pathExtension)
+            return HostOpener.applications(forExtension: (entry.hostFileName as NSString).pathExtension)
         }
         guard let url = item.url else { return [] }
         return HostOpener.applications(for: url)
@@ -334,7 +333,9 @@ final class AppModel: ObservableObject {
     private func isPlayable(_ item: PanelItem) -> Bool {
         switch item.kind {
         case .file: return true
-        case .cbmFile: return item.cbm?.type != .del && item.byteSize > 0
+        case .imageFile:
+            guard let entry = item.cbm, entry.encoding == .petscii else { return false }
+            return entry.type != .del && item.byteSize > 0
         default: return false
         }
     }
@@ -352,7 +353,7 @@ final class AppModel: ObservableObject {
         switch activePanel.location {
         case .volumes: return nil
         case .directory(let url): return url
-        case .image(let url): return url.deletingLastPathComponent()
+        case .image(let url, _): return url.deletingLastPathComponent()
         }
     }
 
@@ -408,11 +409,11 @@ final class AppModel: ObservableObject {
 
     private func read(_ item: PanelItem, from panel: PanelModel) throws -> Payload {
         switch item.kind {
-        case .cbmFile:
+        case .imageFile:
             guard let image = panel.image, let entry = item.cbm else { throw DiskImageError.fileNotFound }
-            let data = try image.read(entry)
+            let data = try image.read(entry, at: panel.location.imagePath)
             return Payload(data: data,
-                           hostName: PETSCII.hostFileName(entry.name, type: entry.type),
+                           hostName: entry.hostFileName,
                            cbmName: entry.name,
                            type: entry.type)
         default:
@@ -428,6 +429,18 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// What to call a file being written into an image. A Commodore disk wants
+    /// the type as a suffix dropped and the name made legal for CBM DOS; an
+    /// Amiga volume takes the name as it stands.
+    private func imageName(for payload: Payload, renamedTo renameTo: String?,
+                           in image: DiskImage) -> [UInt8] {
+        if image.listingStyle == .petscii {
+            return renameTo.map { PETSCII.cbmName(fromASCII: ($0 as NSString).deletingPathExtension) }
+                ?? payload.cbmName
+        }
+        return NameEncoding.latin1.bytes(renameTo ?? payload.hostName)
+    }
+
     // MARK: - Copy / move
 
     func beginTransfer(isMove: Bool) {
@@ -439,9 +452,9 @@ final class AppModel: ObservableObject {
             return
         }
         var name = items.count == 1 ? items[0].title : ""
-        if items.count == 1, case .directory = destination, items[0].kind == .cbmFile,
+        if items.count == 1, case .directory = destination, items[0].kind == .imageFile,
            let entry = items[0].cbm {
-            name = PETSCII.hostFileName(entry.name, type: entry.type)
+            name = entry.hostFileName
         }
         sheet = .transfer(TransferPlan(isMove: isMove, items: items, destination: destination,
                                        destinationLabel: inactivePanel.headerTitle, targetName: name))
@@ -490,13 +503,14 @@ final class AppModel: ObservableObject {
                 case .image:
                     guard let image = target.image else { throw TransferError.noDestination }
                     guard image.canWrite else { throw DiskImageError.readOnly }
-                    let name = renameTo.map { PETSCII.cbmName(fromASCII: ($0 as NSString).deletingPathExtension) }
-                        ?? payload.cbmName
-                    if let existing = image.entries.first(where: { $0.name == PETSCII.trimPadding(name) }) {
-                        if plan.overwrite { try image.delete(existing) }
+                    let path = target.location.imagePath
+                    let name = imageName(for: payload, renamedTo: renameTo, in: image)
+                    if let existing = try image.entries(at: path)
+                        .first(where: { $0.name == PETSCII.trimPadding(name) }) {
+                        if plan.overwrite { try image.delete(existing, at: path) }
                         else { skipped += 1; continue }
                     }
-                    try image.write(name: name, type: payload.type, data: payload.data)
+                    try image.write(name: name, type: payload.type, data: payload.data, at: path)
                     copied += 1
                 }
 
@@ -544,9 +558,9 @@ final class AppModel: ObservableObject {
 
     private func delete(_ item: PanelItem, in panel: PanelModel, toTrash: Bool) throws {
         switch item.kind {
-        case .cbmFile:
+        case .imageFile, .imageFolder:
             guard let image = panel.image, let entry = item.cbm else { throw DiskImageError.fileNotFound }
-            try image.delete(entry)
+            try image.delete(entry, at: panel.location.imagePath)
         case .file, .folder, .diskImage:
             guard let url = item.url else { throw DiskImageError.fileNotFound }
             if toTrash {
@@ -570,9 +584,11 @@ final class AppModel: ObservableObject {
         let panel = activePanel
         do {
             switch item.kind {
-            case .cbmFile:
+            case .imageFile, .imageFolder:
                 guard let image = panel.image, let entry = item.cbm else { throw DiskImageError.fileNotFound }
-                try image.rename(entry, to: PETSCII.cbmName(fromASCII: newName))
+                try image.rename(entry, at: panel.location.imagePath,
+                                 to: entry.encoding == .petscii ? PETSCII.cbmName(fromASCII: newName)
+                                                                : entry.encoding.bytes(newName))
             default:
                 guard let url = item.url else { throw DiskImageError.fileNotFound }
                 let dst = url.deletingLastPathComponent().appendingPathComponent(newName)
@@ -679,8 +695,8 @@ final class AppModel: ObservableObject {
         guard let item = activePanel.currentItem, item.isSelectable, item.kind != .folder else { return }
         do {
             let payload = try read(item, from: activePanel)
-            let isPRG = item.kind == .cbmFile ? item.cbm?.type == .prg
-                                              : item.url?.pathExtension.lowercased() == "prg"
+            let isPRG = item.kind.isInsideImage ? item.cbm?.type == .prg && item.cbm?.encoding == .petscii
+                                                : item.url?.pathExtension.lowercased() == "prg"
             sheet = .viewer(ViewerContent(title: item.title, data: payload.data,
                                           isPRG: isPRG, startInBitmap: bitmap))
         } catch { fail(error) }

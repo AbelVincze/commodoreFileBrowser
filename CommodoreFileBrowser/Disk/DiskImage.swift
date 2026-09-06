@@ -22,12 +22,16 @@ enum CBMFileType: UInt8, CaseIterable {
     }
 }
 
-/// One entry of a Commodore directory.
-struct CBMEntry: Identifiable, Hashable {
+/// One entry of a directory inside an image.
+///
+/// The Commodore fields carry the whole of a 1541 entry; the ones after them
+/// are for formats that know more than CBM DOS does, and default to the
+/// nothing a Commodore directory has to say on the subject.
+struct ImageEntry: Identifiable, Hashable {
     var id: Int { slot }
     /// Position in the directory, used as a stable identity.
     var slot: Int
-    /// Raw PETSCII name with the $A0 padding removed.
+    /// Raw name bytes with the padding removed, in `encoding`.
     var name: [UInt8]
     var type: CBMFileType
     /// A file that was never closed properly - listed as `*PRG` by the drive.
@@ -40,7 +44,35 @@ struct CBMEntry: Identifiable, Hashable {
     /// Byte offset of the 32 byte entry inside the image, for in-place edits.
     var entryOffset: Int
 
-    var displayName: String { PETSCII.ascii(name) }
+    /// How `name` reads as text.
+    var encoding: NameEncoding = .petscii
+    /// The exact length, where the format records one. A CBM directory only
+    /// counts blocks, so the size of a file on it is known to 254 bytes.
+    var byteSize: Int?
+    /// A directory the panel can descend into.
+    var isDirectory: Bool = false
+    /// Permission bits as the platform writes them, e.g. `----rwed`. Empty
+    /// where the format has none.
+    var flags: String = ""
+    var modified: Date?
+
+    var displayName: String { encoding.text(name) }
+
+    /// A name the file system will take, for copying the entry out or handing
+    /// it to another application. A Commodore name gains the type as its
+    /// extension, which is the only place that information can survive.
+    var hostFileName: String {
+        switch encoding {
+        case .petscii: return PETSCII.hostFileName(name, type: type)
+        case .latin1:
+            var out = displayName
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+                .trimmingCharacters(in: .whitespaces)
+            if out.isEmpty || out == "." || out == ".." { out = "unnamed" }
+            return out
+        }
+    }
 }
 
 enum DiskImageError: LocalizedError {
@@ -65,14 +97,14 @@ enum DiskImageError: LocalizedError {
     }
 }
 
-/// A Commodore container that can be browsed as if it were a folder.
+/// A container that can be browsed as if it were a folder.
 protocol DiskImage: AnyObject {
     var url: URL { get }
-    /// Disk name in raw PETSCII, as shown in the reverse-video header line.
+    /// Volume name in the format's own bytes, as shown in the header line.
     var diskName: [UInt8] { get }
-    /// Disk ID + DOS type, e.g. `2A 2A`.
-    var diskID: [UInt8] { get }
-    var entries: [CBMEntry] { get }
+    /// Disk ID + DOS type, e.g. `2A 2A`, or nil on a format that has none.
+    var diskID: [UInt8]? { get }
+    var entries: [ImageEntry] { get }
     var blocksFree: Int { get }
     var formatName: String { get }
     var canWrite: Bool { get }
@@ -81,17 +113,45 @@ protocol DiskImage: AnyObject {
     /// container is internally consistent.
     var integrityNote: String? { get }
 
-    func read(_ entry: CBMEntry) throws -> Data
+    func read(_ entry: ImageEntry) throws -> Data
     func write(name: [UInt8], type: CBMFileType, data: Data) throws
-    func delete(_ entry: CBMEntry) throws
-    func rename(_ entry: CBMEntry, to name: [UInt8]) throws
-    func setLocked(_ entry: CBMEntry, locked: Bool) throws
+    func delete(_ entry: ImageEntry) throws
+    func rename(_ entry: ImageEntry, to name: [UInt8]) throws
+    func setLocked(_ entry: ImageEntry, locked: Bool) throws
     func setDiskHeader(name: [UInt8], id: [UInt8]) throws
     /// Swap an entry with its neighbour, for rearranging a directory.
-    func moveEntry(_ entry: CBMEntry, by offset: Int) throws
-    func addDecorativeEntry(name: [UInt8], after entry: CBMEntry?) throws
+    func moveEntry(_ entry: ImageEntry, by offset: Int) throws
+    func addDecorativeEntry(name: [UInt8], after entry: ImageEntry?) throws
     func save() throws
     func reload() throws
+}
+
+/// What a format does not have to say for itself. The defaults describe a flat
+/// Commodore directory drawn from the character ROM, which is what every format
+/// here was until the Amiga ones arrived.
+extension DiskImage {
+    var listingStyle: ListingStyle { .petscii }
+    /// Payload bytes in one block, for sizing an entry the directory only
+    /// counts in blocks. 254 on a CBM disk: two of the 256 are the next link.
+    var usableBytesPerBlock: Int { 254 }
+    /// Free space as the panel footer says it.
+    var freeDescription: String { "\(blocksFree) blocks free" }
+    var supportsDirectories: Bool { false }
+
+    /// `path` is the directory inside the image, empty for its root. A format
+    /// without directories only ever sees the root and can ignore it.
+    func entries(at path: [String]) throws -> [ImageEntry] { entries }
+    func read(_ entry: ImageEntry, at path: [String]) throws -> Data { try read(entry) }
+    func write(name: [UInt8], type: CBMFileType, data: Data, at path: [String]) throws {
+        try write(name: name, type: type, data: data)
+    }
+    func delete(_ entry: ImageEntry, at path: [String]) throws { try delete(entry) }
+    func rename(_ entry: ImageEntry, at path: [String], to name: [UInt8]) throws {
+        try rename(entry, to: name)
+    }
+    func makeDirectory(name: [UInt8], at path: [String]) throws {
+        throw DiskImageError.unsupportedFormat
+    }
 }
 
 enum DiskImageFactory {

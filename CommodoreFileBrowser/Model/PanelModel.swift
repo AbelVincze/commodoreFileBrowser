@@ -7,20 +7,38 @@ enum PanelSide: String, Codable { case left, right }
 enum PanelLocation: Codable, Equatable, Hashable {
     case volumes
     case directory(URL)
-    case image(URL)
+    /// An image, and the directory inside it: empty at its root, one component
+    /// per level on a format that has them.
+    case image(URL, path: [String])
+
+    /// The root of an image, which is every format but the Amiga ones.
+    static func image(_ url: URL) -> PanelLocation { .image(url, path: []) }
 
     var url: URL? {
         switch self {
         case .volumes: return nil
-        case .directory(let u), .image(let u): return u
+        case .directory(let u): return u
+        case .image(let u, _): return u
         }
     }
+
+    var imagePath: [String] {
+        if case .image(_, let path) = self { return path }
+        return []
+    }
+
+    var isImage: Bool { if case .image = self { return true }; return false }
 }
 
 struct PanelItem: Identifiable {
     enum Kind {
-        case parent, volume, folder, diskImage, file, cbmFile
-        var isNavigable: Bool { self == .parent || self == .volume || self == .folder || self == .diskImage }
+        case parent, volume, folder, diskImage, file, imageFile, imageFolder
+        var isNavigable: Bool {
+            self == .parent || self == .volume || self == .folder
+                || self == .diskImage || self == .imageFolder
+        }
+        /// A row that lives inside an image rather than on the file system.
+        var isInsideImage: Bool { self == .imageFile || self == .imageFolder }
     }
 
     let id: Int
@@ -28,10 +46,15 @@ struct PanelItem: Identifiable {
     var title: String
     var detail: String
     var url: URL?
-    var cbm: CBMEntry?
-    /// Pre-composed PETSCII row, used when the panel shows the inside of an image.
+    var cbm: ImageEntry?
+    /// Pre-composed PETSCII row, used when the panel shows the inside of an
+    /// image the machine itself would have listed from the character ROM.
+    /// Nil elsewhere, which is what puts the row in the system font.
     var petsciiLine: [UInt8]?
     var byteSize: Int64 = 0
+    /// Permission bits, where the format keeps them.
+    var flags: String = ""
+    var modified: Date?
     var isSelectable: Bool { kind != .parent }
 }
 
@@ -66,7 +89,8 @@ final class PanelModel: ObservableObject {
         switch location {
         case .volumes: return "Volumes"
         case .directory(let url): return url.path
-        case .image(let url): return url.lastPathComponent
+        case .image(let url, let path):
+            return ([url.lastPathComponent] + path).joined(separator: "/")
         }
     }
 
@@ -74,8 +98,8 @@ final class PanelModel: ObservableObject {
 
     var footerText: String {
         if let image {
-            let files = items.filter { $0.kind == .cbmFile }.count
-            let free = image is CBMDiskImage ? "\(image.blocksFree) blocks free" : "\(image.formatName)"
+            let files = items.filter { $0.kind.isInsideImage }.count
+            let free = image.freeDescription
             return marked.isEmpty ? "\(files) files · \(free)"
                                   : "\(marked.count) marked · \(files) files · \(free)"
         }
@@ -114,7 +138,11 @@ final class PanelModel: ObservableObject {
     /// `keepChanges: false` throws away everything edited since the image was
     /// opened - the file on disk was never touched.
     func navigate(to newLocation: PanelLocation, focusOn name: String? = nil, keepChanges: Bool = true) {
-        if keepChanges { saveImage() }
+        // Stepping between directories inside one image is not leaving it, so
+        // it must not commit: the transaction runs until the panel is somewhere
+        // else entirely.
+        let staying = newLocation.isImage && location.isImage && newLocation.url == location.url
+        if keepChanges && !staying { saveImage() }
         rememberCursor()
         location = newLocation
         rememberVolume()
@@ -128,7 +156,8 @@ final class PanelModel: ObservableObject {
         switch location {
         case .volumes: return "volumes"
         case .directory(let url): return "dir:" + url.standardizedFileURL.path
-        case .image(let url): return "img:" + url.standardizedFileURL.path
+        case .image(let url, let path):
+            return (["img:" + url.standardizedFileURL.path] + path).joined(separator: "/")
         }
     }
 
@@ -180,7 +209,10 @@ final class PanelModel: ObservableObject {
             if let url = item.url { navigate(to: .directory(url)) }
         case .diskImage:
             if let url = item.url { navigate(to: .image(url)) }
-        case .file, .cbmFile:
+        case .imageFolder:
+            guard case .image(let url, let path) = location else { return }
+            navigate(to: .image(url, path: path + [item.title]))
+        case .file, .imageFile:
             break
         }
     }
@@ -197,9 +229,15 @@ final class PanelModel: ObservableObject {
             } else {
                 navigate(to: .directory(parent), focusOn: url.lastPathComponent, keepChanges: keepChanges)
             }
-        case .image(let url):
-            navigate(to: .directory(url.deletingLastPathComponent()),
-                     focusOn: url.lastPathComponent, keepChanges: keepChanges)
+        case .image(let url, let path):
+            // Discarding is about the image as a whole, so Esc walks out of it
+            // however deep in it we are. Keeping changes climbs one level.
+            if keepChanges, let leaf = path.last {
+                navigate(to: .image(url, path: path.dropLast()), focusOn: leaf)
+            } else {
+                navigate(to: .directory(url.deletingLastPathComponent()),
+                         focusOn: url.lastPathComponent, keepChanges: keepChanges)
+            }
         }
     }
 
@@ -221,8 +259,8 @@ final class PanelModel: ObservableObject {
         case .directory(let url):
             image = nil
             items = loadDirectory(url)
-        case .image(let url):
-            loadImage(url)
+        case .image(let url, let path):
+            loadImage(url, path: path)
         }
 
         if let previousName, let index = items.firstIndex(where: { $0.title == previousName }) {
@@ -282,16 +320,20 @@ final class PanelModel: ObservableObject {
             let kind: PanelItem.Kind = row.isDir ? .folder : (DiskImageFactory.isImage(row.url) ? .diskImage : .file)
             let detail = row.isDir ? "—" : ByteCountFormatter.string(fromByteCount: row.size, countStyle: .file)
             out.append(PanelItem(id: out.count, kind: kind, title: row.url.lastPathComponent,
-                                 detail: detail, url: row.url, byteSize: row.size))
+                                 detail: detail, url: row.url, byteSize: row.size,
+                                 modified: row.date))
         }
         return out
     }
 
-    private func loadImage(_ url: URL) {
+    private func loadImage(_ url: URL, path: [String]) {
         do {
-            let img = try DiskImageFactory.open(url)
+            // Walking into a directory of the image we already have open must
+            // reuse it. Opening the file again would read it back from disk and
+            // take the pending edits with it.
+            let img = try (image?.url == url ? image! : DiskImageFactory.open(url))
             image = img
-            items = Self.rows(for: img)
+            items = try Self.rows(for: img, path: path)
         } catch {
             image = nil
             loadError = error.localizedDescription
@@ -309,27 +351,41 @@ final class PanelModel: ObservableObject {
     func refreshImage() {
         guard let image else { return }
         let name = currentItem?.title
-        items = Self.rows(for: image)
+        do { items = try Self.rows(for: image, path: location.imagePath) }
+        catch { loadError = error.localizedDescription }
         if let name, let index = items.firstIndex(where: { $0.title == name }) { cursor = index }
         cursor = min(cursor, max(0, items.count - 1))
         marked.removeAll()
     }
 
-    static func rows(for image: DiskImage) -> [PanelItem] {
+    static func rows(for image: DiskImage, path: [String]) throws -> [PanelItem] {
+        let petscii = image.listingStyle == .petscii
         var out = [PanelItem(id: 0, kind: .parent, title: "..", detail: "", url: nil)]
-        for entry in image.entries {
-            out.append(PanelItem(id: out.count, kind: .cbmFile,
+        for entry in try image.entries(at: path) {
+            let bytes = entry.byteSize ?? entry.blocks * image.usableBytesPerBlock
+            out.append(PanelItem(id: out.count,
+                                 kind: entry.isDirectory ? .imageFolder : .imageFile,
                                  title: entry.displayName,
-                                 detail: entry.type.name,
+                                 detail: petscii ? entry.type.name : sizeText(for: entry),
                                  url: nil, cbm: entry,
-                                 petsciiLine: listingLine(for: entry),
-                                 byteSize: Int64(entry.blocks * 254)))
+                                 petsciiLine: petscii ? listingLine(for: entry) : nil,
+                                 byteSize: Int64(bytes),
+                                 flags: entry.flags,
+                                 modified: entry.modified))
         }
         return out
     }
 
+    /// The size column of a listing drawn as text: an exact byte count, which
+    /// is what a machine with a byte count in its directory prints.
+    private static func sizeText(for entry: ImageEntry) -> String {
+        if entry.isDirectory { return "Dir" }
+        guard let bytes = entry.byteSize else { return "\(entry.blocks)" }
+        return bytes.formatted(.number)
+    }
+
     /// One directory row the way a 1541 prints it: blocks, "name", type.
-    static func listingLine(for entry: CBMEntry) -> [UInt8] {
+    static func listingLine(for entry: ImageEntry) -> [UInt8] {
         var line = PETSCII.petscii(fromASCII: String(format: "%-4d ", entry.blocks))
         line += [0x22] + entry.name + [0x22]
         line += [UInt8](repeating: 0x20, count: max(0, 16 - entry.name.count))
@@ -343,7 +399,7 @@ final class PanelModel: ObservableObject {
     static func headerLine(for image: DiskImage) -> [UInt8] {
         var line = PETSCII.petscii(fromASCII: "0 ")
         line += [0x22] + PETSCII.padded16(PETSCII.trimPadding(image.diskName)).map { $0 == 0xA0 ? 0x20 : $0 } + [0x22]
-        line += [0x20] + image.diskID
+        if let id = image.diskID { line += [0x20] + id }
         return line
     }
 
@@ -400,7 +456,9 @@ final class PanelModel: ObservableObject {
         switch stored {
         case .volumes:
             location = .volumes
-        case .directory(let url), .image(let url):
+        case .directory(let url):
+            location = FileManager.default.fileExists(atPath: url.path) ? stored : .volumes
+        case .image(let url, _):
             location = FileManager.default.fileExists(atPath: url.path) ? stored : .volumes
         }
         reload(isNavigation: true)

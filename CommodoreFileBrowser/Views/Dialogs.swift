@@ -90,7 +90,7 @@ struct DeleteSheet: View {
     }
 
     private var explanation: String {
-        let insideImage = items.contains { $0.kind == .cbmFile }
+        let insideImage = items.contains { $0.kind.isInsideImage }
         if insideImage { return "The files will be scratched from the disk image." }
         return toTrash ? "The items will be moved to the Trash."
                        : "The items will be deleted permanently."

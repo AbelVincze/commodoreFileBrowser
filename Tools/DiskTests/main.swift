@@ -15,7 +15,7 @@ func dump(_ path: String) {
     do {
         let img = try DiskImageFactory.open(url)
         print("\n=== \(url.lastPathComponent) — \(img.formatName)")
-        print("  header: \"\(PETSCII.ascii(PETSCII.trimPadding(img.diskName)))\" \(PETSCII.ascii(img.diskID))")
+        print("  header: \"\(PETSCII.ascii(PETSCII.trimPadding(img.diskName)))\" \(PETSCII.ascii(img.diskID ?? []))")
         for e in img.entries.prefix(8) {
             print(String(format: "  %4d \"%@\" %@%@%@", e.blocks, e.displayName,
                          e.isSplat ? "*" : " ", e.type.name, e.isLocked ? "<" : ""))
@@ -304,6 +304,68 @@ do {
           "selecting the volume returns to the folder we left")
 } catch {
     print("  FAIL navigation: \(error)"); failures += 1
+}
+
+// --- The widened image model ------------------------------------------------
+print("\n=== image model")
+do {
+    // A location inside an image carries the directory it is showing, and has
+    // to survive being written to the defaults and read back.
+    // Absolute, because a relative URL keeps its base and comparing one
+    // against the absolute URL that comes back out of JSON never matches.
+    let d64 = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("sample_images/cbmcmd23.d64")
+    let deep = PanelLocation.image(d64, path: ["c", "devs"])
+    check(PanelLocation.image(d64) == .image(d64, path: []), "the bare form is the root of the image")
+    check(deep.imagePath == ["c", "devs"], "a location remembers the directory inside the image")
+    let coded = try JSONDecoder().decode(PanelLocation.self,
+                                         from: JSONEncoder().encode(deep))
+    check(coded == deep, "and round trips through the defaults")
+
+    // A Commodore entry names its host copy with the type as the extension; an
+    // Amiga name is already a name the file system will take.
+    let cbm = ImageEntry(slot: 0, name: PETSCII.cbmName(fromASCII: "my file"), type: .prg,
+                         isSplat: false, isLocked: false, blocks: 2,
+                         startTrack: 17, startSector: 0, entryOffset: 0)
+    check(cbm.hostFileName == "my file.prg", "a CBM entry takes its type as an extension")
+    check(cbm.displayName == "my file", "and reads back as it was written")
+    let amiga = ImageEntry(slot: 0, name: NameEncoding.latin1.bytes("Startup-Sequence"), type: .prg,
+                           isSplat: false, isLocked: false, blocks: 3,
+                           startTrack: 0, startSector: 0, entryOffset: 0,
+                           encoding: .latin1, byteSize: 1204, flags: "----rwed")
+    check(amiga.hostFileName == "Startup-Sequence", "an Amiga name is already a host name")
+    check(amiga.displayName == "Startup-Sequence", "and keeps the case it was given")
+    check(NameEncoding.latin1.text([0xC4, 0x6E, 0x64]) == "Änd", "Latin-1 reads its high letters")
+    check(NameEncoding.latin1.text([0x09, 0x41]) == "_A", "and refuses a control code a row")
+
+    // The footer asks the image what it has free rather than testing its type.
+    let disk = try CBMDiskImage(url: d64)
+    check(disk.freeDescription == "\(disk.blocksFree) blocks free", "a disk reports blocks free")
+    let tape = try T64Image(url: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("sample_images/krakout.t64"))
+    check(tape.freeDescription == tape.formatName, "a tape reports its size instead")
+    check(tape.diskID == nil, "a tape has no disk ID")
+    check(PanelModel.headerLine(for: tape).contains(0x22),
+          "the tape header line still quotes its name")
+    check(PanelModel.headerLine(for: disk).count > PanelModel.headerLine(for: tape).count,
+          "and is shorter than a disk's by the ID the tape does not have")
+
+    // Rows on the file system now carry the modification date the column shows.
+    let panel = PanelModel(side: .left)
+    panel.navigate(to: .directory(URL(fileURLWithPath: "sample_images")))
+    let d64Row = panel.items.first { $0.title == "cbmcmd23.d64" }
+    check(d64Row?.modified != nil, "a file system row carries its modification date")
+    check(d64Row?.kind == .diskImage, "and still knows it is an image")
+
+    // Inside a Commodore image the rows are PETSCII and flat.
+    panel.navigate(to: .image(d64))
+    let row = panel.items.first { $0.kind.isInsideImage }
+    check(row?.petsciiLine != nil, "a Commodore row is drawn from the character ROM")
+    check(row?.kind == .imageFile, "and is a file, not a directory")
+    check(row?.modified == nil && row?.flags.isEmpty == true,
+          "with no date or protection bits, which a CBM directory does not keep")
+} catch {
+    print("  FAIL image model: \(error)"); failures += 1
 }
 
 // --- Bitmap layout ----------------------------------------------------------

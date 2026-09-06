@@ -19,7 +19,7 @@ struct RowContextMenu: View {
 
     /// An entry inside an image is a copy once it leaves, and saying so in the
     /// menu is the only warning there is going to be.
-    private var isInsideImage: Bool { item.kind == .cbmFile }
+    private var isInsideImage: Bool { item.kind.isInsideImage }
     private var openTitle: String { isInsideImage ? "Open Copy" : "Open" }
     private var openWithTitle: String { isInsideImage ? "Open Copy With" : "Open With" }
     private var revealTitle: String { isInsideImage ? "Show Image in Finder" : "Show in Finder" }

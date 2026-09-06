@@ -23,7 +23,7 @@ final class CBMDiskImage: DiskImage {
     let url: URL
     let format: Format
     private(set) var bytes: [UInt8]
-    private(set) var entries: [CBMEntry] = []
+    private(set) var entries: [ImageEntry] = []
     /// Byte offsets of every directory slot, in directory order, including the
     /// empty ones. Used for inserting and rearranging.
     private(set) var slotOffsets: [Int] = []
@@ -132,7 +132,7 @@ final class CBMDiskImage: DiskImage {
     }
 
     /// `ID` + space + DOS type, exactly as a real drive prints it.
-    var diskID: [UInt8] {
+    var diskID: [UInt8]? {
         let id = Array(bytes[idFieldOffset..<(idFieldOffset + 2)])
         let dos = Array(bytes[dosTypeOffset..<(dosTypeOffset + 2)])
         return id + [0x20] + dos
@@ -175,7 +175,7 @@ final class CBMDiskImage: DiskImage {
                 guard typeByte != 0 else { continue }
                 let type = CBMFileType(rawValue: typeByte & 0x07) ?? .prg
                 let rawName = Array(bytes[(e + 5)..<(e + 21)])
-                entries.append(CBMEntry(
+                entries.append(ImageEntry(
                     slot: slot,
                     name: PETSCII.trimPadding(rawName),
                     type: type,
@@ -342,7 +342,7 @@ final class CBMDiskImage: DiskImage {
 
     // MARK: - Reading
 
-    func read(_ entry: CBMEntry) throws -> Data {
+    func read(_ entry: ImageEntry) throws -> Data {
         var out = Data()
         var track = Int(entry.startTrack)
         var sector = Int(entry.startSector)
@@ -476,7 +476,7 @@ final class CBMDiskImage: DiskImage {
         return newOffset
     }
 
-    func delete(_ entry: CBMEntry) throws {
+    func delete(_ entry: ImageEntry) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         var track = Int(entry.startTrack)
         var sector = Int(entry.startSector)
@@ -492,7 +492,7 @@ final class CBMDiskImage: DiskImage {
         try scanDirectory()
     }
 
-    func rename(_ entry: CBMEntry, to name: [UInt8]) throws {
+    func rename(_ entry: ImageEntry, to name: [UInt8]) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         let padded = PETSCII.padded16(PETSCII.trimPadding(Array(name.prefix(16))))
         for i in 0..<16 { bytes[entry.entryOffset + 5 + i] = padded[i] }
@@ -500,7 +500,7 @@ final class CBMDiskImage: DiskImage {
         try scanDirectory()
     }
 
-    func setLocked(_ entry: CBMEntry, locked: Bool) throws {
+    func setLocked(_ entry: ImageEntry, locked: Bool) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         if locked { bytes[entry.entryOffset + 2] |= 0x40 } else { bytes[entry.entryOffset + 2] &= ~0x40 }
         hasUnsavedChanges = true
@@ -509,7 +509,7 @@ final class CBMDiskImage: DiskImage {
 
     // MARK: - Directory cosmetics
 
-    func moveEntry(_ entry: CBMEntry, by delta: Int) throws {
+    func moveEntry(_ entry: ImageEntry, by delta: Int) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         guard let index = slotOffsets.firstIndex(of: entry.entryOffset) else { throw DiskImageError.fileNotFound }
         let target = index + delta
@@ -525,7 +525,7 @@ final class CBMDiskImage: DiskImage {
         }
     }
 
-    func addDecorativeEntry(name: [UInt8], after entry: CBMEntry?) throws {
+    func addDecorativeEntry(name: [UInt8], after entry: ImageEntry?) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         let free = try allocateDirectorySlot()
         guard let freeIndex = slotOffsets.firstIndex(of: free) else { throw DiskImageError.directoryFull }

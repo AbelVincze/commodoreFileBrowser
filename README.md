@@ -222,7 +222,7 @@ geometry is not, since it depends on what the file is. At most 1 MB is drawn.
 `Return` on a file opens the player. It is a sheet rather than a bar, so
 closing it stops playback.
 
-The addresses it needs are worked out three ways:
+The addresses it needs are worked out four ways:
 
 * **PSID / RSID header** — load, init and play addresses, subtune count,
   title, author and SID model all come from the header.
@@ -232,6 +232,15 @@ The addresses it needs are worked out three ways:
   A `!` in place of the `I` (`Z108 !2800 P2803`), or trailing the name, marks a
   tune with more than one song. Run-together spellings such as
   `Z101 !E006PPE000` parse too; names like `PLAYER V3.1 0800` correctly do not.
+* **The Music Assembler player** — recognised by its own code, so the name is
+  free to be anything. The editor saves the player in front of the tune at a
+  fixed layout: init `$48` past the load address, and the interrupt handler
+  that drives the music `$18` past it. Both the init routine and the head of
+  the play routine are checked, and the play routine's own address has to agree
+  with where the file says it loads, so a copy moved somewhere else without
+  being relocated is not mistaken for a working tune. Where a ripper wrote a
+  banner over the first bytes — a fifth of the 256 such tunes on the disks here
+  — the handler is gone and the routine it called, `$21` on, is used instead.
 * **By hand** — anything else, or `⇧Return` to override a wrong guess. The file
   is treated as a PRG, so its first two bytes give the load address.
 

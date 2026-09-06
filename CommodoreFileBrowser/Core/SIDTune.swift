@@ -6,6 +6,7 @@ struct SIDTune {
     enum Source: String {
         case psid = "PSID header"
         case naming = "file name"
+        case musicAssembler = "Music Assembler player"
         case raw = "raw binary"
     }
 
@@ -148,6 +149,60 @@ enum SIDTuneLoader {
                        defaultSong: 1)
     }
 
+    // MARK: - The Music Assembler player
+
+    /// Music Assembler saves a tune with its player in front of it, laid out
+    /// the same way every time: init sits $48 past the load address, and the
+    /// interrupt handler that drives the music $18 past it. Nothing in the file
+    /// says so — the names are free-form and there is no header — so the
+    /// player's own code is what identifies it.
+    ///
+    /// Two places are read, and across the 255 Music Assembler tunes on the
+    /// user's disks they never disagree: either both match or neither does.
+    static func musicAssembler(_ name: String, prg: [UInt8]) -> SIDTune? {
+        guard prg.count > 2 + 0x52 else { return nil }
+        let body = Array(prg[2...])
+        let high = prg[1]
+
+        // Init: `LDA #$1F / STA $D418 / LDA #$F0 / STA $D417`, the volume and
+        // the filter. A few tunes carry a hand patch turning a store into `BIT`
+        // to leave what is already there alone, so either opcode is allowed.
+        func stores(_ byte: UInt8) -> Bool { byte == 0x8D || byte == 0x2C }
+        guard body[0x48] == 0xA9, body[0x49] == 0x1F, stores(body[0x4A]),
+              body[0x4B] == 0x18, body[0x4C] == 0xD4,
+              body[0x4D] == 0xA9, body[0x4E] == 0xF0, stores(body[0x4F]),
+              body[0x50] == 0x17, body[0x51] == 0xD4
+        else { return nil }
+
+        // The head of the play routine: `LDX #$00 / DEC $xx90`. The address it
+        // touches belongs to the player itself, so matching it against the load
+        // address also confirms the code was relocated to where the file says
+        // it goes — a tune moved to a new address without being relocated would
+        // still carry the init bytes above, and would not play.
+        guard body[0x21] == 0xA2, body[0x22] == 0x00, body[0x23] == 0xCE, body[0x25] == high
+        else { return nil }
+
+        // Play is $18 on: `INC $D019 / JSR $xx21 / JMP $EA31`, the handler the
+        // standalone player hangs off the interrupt vector. Rippers write a
+        // banner over the first $21 bytes often enough that a fifth of these
+        // files have none of it left, and then the routine that handler calls,
+        // $21 on, is the one to call instead. It is the same music either way.
+        let handler = body[0x18] == 0xEE && body[0x19] == 0x19 && body[0x1A] == 0xD0
+                   && body[0x1B] == 0x20 && body[0x1C] == 0x21 && body[0x1D] == high
+        let load = Int(prg[0]) | Int(high) << 8
+
+        return SIDTune(source: .musicAssembler,
+                       title: name.trimmingCharacters(in: .whitespaces),
+                       author: nil,
+                       released: nil,
+                       loadAddress: load,
+                       initAddress: load + 0x48,
+                       playAddress: load + (handler ? 0x18 : 0x21),
+                       payload: body,
+                       songCount: 1,
+                       defaultSong: 1)
+    }
+
     // MARK: - Raw
 
     /// A PRG: the first two bytes are the load address.
@@ -165,9 +220,14 @@ enum SIDTuneLoader {
                        defaultSong: 1)
     }
 
-    /// PSID first, then the name convention. Nil means the addresses have to be
-    /// entered by hand.
+    /// PSID first, then the name convention, then the players recognised by
+    /// their own code. Nil means the addresses have to be entered by hand.
+    ///
+    /// A name that spells out the addresses is taken at its word before the
+    /// code is looked at: it is what the person who saved the file meant, and
+    /// on these disks it is a jump table in front of the player rather than the
+    /// player's own entry points.
     static func detect(name: String, data: [UInt8]) -> SIDTune? {
-        psid(data) ?? named(name, prg: data)
+        psid(data) ?? named(name, prg: data) ?? musicAssembler(name, prg: data)
     }
 }

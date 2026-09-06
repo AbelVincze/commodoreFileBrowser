@@ -1123,6 +1123,52 @@ do {
     if let tune = SIDTuneLoader.raw(prg, name: "T", initAddress: 0x2000, playAddress: 0x2003) {
         check(tune.loadAddress == 0x2000 && tune.payload.count == 100, "raw PRG loads at $2000")
     }
+
+    // Music Assembler, recognised by the player's own code rather than by the
+    // name. Sweep the user's MUSICS disks and report the hit rate.
+    let musics = "/Users/macc/Emulation/c64/SD_backup/macc/music"
+    let musicDisks = (try? FileManager.default.contentsOfDirectory(atPath: musics))?
+        .filter { $0.uppercased().hasSuffix(".D64") }.sorted() ?? []
+    var found = 0, handler = 0, bare = 0, misplaced = 0
+    for disk in musicDisks {
+        let img = try CBMDiskImage(url: URL(fileURLWithPath: "\(musics)/\(disk)"))
+        for entry in img.entries where entry.type == .prg {
+            let bytes = [UInt8](try img.read(entry))
+            guard let tune = SIDTuneLoader.musicAssembler(entry.displayName, prg: bytes)
+            else { continue }
+            found += 1
+            if tune.initAddress != tune.loadAddress + 0x48 { misplaced += 1 }
+            if tune.playAddress == tune.loadAddress + 0x18 { handler += 1 }
+            if tune.playAddress == tune.loadAddress + 0x21 { bare += 1 }
+        }
+    }
+    check(!musicDisks.isEmpty, "found \(musicDisks.count) MUSICS disks")
+    check(found > 200, "\(found) Music Assembler tunes recognised without their names")
+    check(misplaced == 0, "every one puts init $48 past the load address")
+    check(handler + bare == found,
+          "\(handler) play through the interrupt handler, \(bare) through the routine it calls")
+
+    // The two shapes, off one disk: a tune that kept its standalone player, and
+    // one a ripper wrote a banner over.
+    let mmus = try CBMDiskImage(url: URL(fileURLWithPath: "\(musics)/MMUS_279.D64"))
+    func mac(_ name: String) throws -> SIDTune? {
+        guard let entry = mmus.entries.first(where: {
+            $0.displayName.caseInsensitiveCompare(name) == .orderedSame }) else { return nil }
+        return SIDTuneLoader.detect(name: entry.displayName, data: [UInt8](try mmus.read(entry)))
+    }
+    if let tune = try mac("S.MAC.09") {
+        check(tune.source == .musicAssembler, "s.mac.09 detected from the player")
+        check(tune.loadAddress == 0xC000 && tune.initAddress == 0xC048
+              && tune.playAddress == 0xC018, "load $C000, init $C048, play $C018")
+    } else { check(false, "s.mac.09 did not detect") }
+    if let tune = try mac("S.MAC.06") {
+        check(tune.playAddress == 0xC021, "the banner-over-the-player copy plays at $C021")
+    } else { check(false, "s.mac.06 did not detect") }
+
+    // The editor itself and a utility sit on the same disk and must be left be.
+    for name in ["MUSIC ASSEMBLER", "FILTEX!", "S-PLAYER V1 /MAC"] {
+        check((try? mac(name)) ?? nil == nil, "\(name) is not taken for a tune")
+    }
 } catch {
     print("  FAIL sid: \(error)"); failures += 1
 }
@@ -1248,6 +1294,35 @@ do {
     check((3..<9).allMatch { voicePeak[$0] == 0 }, "voices of absent chips stay silent")
 
     csid_scope_enable(0)
+
+    // Both shapes of Music Assembler tune actually sound, at the addresses the
+    // player's layout gives them.
+    func audible(_ t: SIDTune) -> Int {
+        cSID_init(44100)
+        t.payload.withUnsafeBufferPointer {
+            csid_load($0.baseAddress, Int32($0.count), UInt32(t.loadAddress))
+        }
+        csid_set_addresses(UInt32(t.initAddress), UInt32(t.playAddress))
+        csid_set_sid(8580, 0, 0); csid_set_speed_hz(0)
+        csid_start(0, t.selector)
+        let frames = 44100 * 2
+        var buffer = [Int16](repeating: 0, count: frames)
+        buffer.withUnsafeMutableBufferPointer { csid_render($0.baseAddress, Int32(frames)) }
+        return buffer.filter { $0 != 0 }.count
+    }
+    let macDisk = try CBMDiskImage(url: URL(fileURLWithPath:
+        "/Users/macc/Emulation/c64/SD_backup/macc/music/MMUS_279.D64"))
+    for name in ["S.MAC.09", "S.MAC.06"] {
+        guard let entry = macDisk.entries.first(where: {
+                  $0.displayName.caseInsensitiveCompare(name) == .orderedSame }),
+              let macTune = SIDTuneLoader.detect(name: entry.displayName,
+                                                 data: [UInt8](try macDisk.read(entry)))
+        else { check(false, "\(name) did not detect"); continue }
+        let heard = audible(macTune)
+        check(heard > 40_000,
+              String(format: "%@ plays at $%04X: %d/88200 non-silent samples",
+                     name, macTune.playAddress, heard))
+    }
 
     // Handing a file inside an image to the system means writing a copy out
     // first. It is a copy, and read-only so that stays true.

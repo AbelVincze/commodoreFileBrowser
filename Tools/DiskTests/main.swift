@@ -53,7 +53,8 @@ for kind in CBMDiskImage.BlankFormat.allCases {
         try CBMDiskImage.createBlank(kind, name: PETSCII.petscii(fromASCII: "test disk"),
                                      id: PETSCII.petscii(fromASCII: "01"), at: url)
         let img = try CBMDiskImage(url: url)
-        let expected = [CBMDiskImage.BlankFormat.d64: 664, .d71: 1328, .d81: 3160][kind]!
+        let expected = [CBMDiskImage.BlankFormat.d64: 664, .d67: 670, .d71: 1328,
+                        .d81: 3160, .d80: 2052, .d82: 4133][kind]!
         check(img.blocksFree == expected, "\(kind.rawValue) fresh format: \(img.blocksFree) blocks free (want \(expected))")
         check(img.entries.isEmpty, "\(kind.rawValue) fresh directory is empty")
         check(PETSCII.ascii(PETSCII.trimPadding(img.diskName)) == "test disk", "\(kind.rawValue) disk name")
@@ -102,6 +103,75 @@ for kind in CBMDiskImage.BlankFormat.allCases {
 }
 
 // --- Fill a disk completely --------------------------------------------------
+// --- The drives beyond the 1541 --------------------------------------------
+print("\n=== other Commodore geometries")
+do {
+    // Sizes are what a drive of each kind wrote, and the free count is what it
+    // reported on a fresh disk. Both were checked against VICE's own c1541.
+    for (kind, size, free) in [(CBMDiskImage.BlankFormat.d67, 176_640, 670),
+                               (.d80, 533_248, 2052),
+                               (.d82, 1_066_496, 4133)] {
+        let url = URL(fileURLWithPath: "\(scratch)/geo.\(kind.fileExtension)")
+        try? FileManager.default.removeItem(at: url)
+        try CBMDiskImage.createBlank(kind, name: PETSCII.petscii(fromASCII: "test disk"),
+                                     id: PETSCII.petscii(fromASCII: "01"), at: url)
+        let bytes = try Data(contentsOf: url).count
+        check(bytes == size, "\(kind.rawValue) is \(bytes) bytes (want \(size))")
+        let img = try CBMDiskImage(url: url)
+        check(img.blocksFree == free, "\(kind.rawValue) fresh: \(img.blocksFree) blocks free (want \(free))")
+        check(img.integrityNote == nil, "\(kind.rawValue) BAM agrees with the directory")
+        check(PETSCII.ascii(PETSCII.trimPadding(img.diskName)) == "test disk", "\(kind.rawValue) names its disk")
+
+        // The last track has to be inside the BAM, which is the thing four
+        // blocks of allocation bitmap on a D82 could most easily get wrong.
+        var payload = Data([0x01, 0x08])
+        payload.append(contentsOf: (0..<600).map { UInt8($0 & 0xFF) })
+        try img.write(name: PETSCII.cbmName(fromASCII: "hello"), type: .prg, data: payload)
+        try img.save()
+        let reread = try CBMDiskImage(url: url)
+        check(try reread.read(reread.entries[0]) == payload, "\(kind.rawValue) round trips a file")
+        check(reread.blocksFree == free - 3, "\(kind.rawValue) spent 3 blocks on it")
+        check(reread.integrityNote == nil, "\(kind.rawValue) still consistent after a write")
+    }
+
+    // A PET header points at the BAM rather than at the directory, so finding
+    // the directory means ignoring that pointer rather than following it.
+    let pet = try CBMDiskImage(url: URL(fileURLWithPath: "\(scratch)/geo.d80"))
+    check(pet.entries.count == 1 && pet.entries[0].displayName == "hello",
+          "the 8050 directory is found past the BAM the header points at")
+    check(PETSCII.ascii(pet.diskID ?? []) == "01 2c", "and the 8050 writes DOS type 2C")
+
+    // DOS 1 numbered its version and left the type bytes blank.
+    let dos1 = try Data(contentsOf: URL(fileURLWithPath: "\(scratch)/geo.d67"))
+    let header = 17 * 21 * 256
+    check(dos1[header + 2] == 0x01, "a 2040 disk carries DOS version 1")
+    check(dos1[header + 165] == 0x20 && dos1[header + 166] == 0xA0, "and no DOS type after its ID")
+
+    // An X64 is a D64 behind a 64 byte header: same contents, and the header
+    // has to survive being written through.
+    let source = URL(fileURLWithPath: "sample_images/cbmcmd23.d64")
+    var head = [UInt8](repeating: 0, count: 64)
+    head[0] = 0x43; head[1] = 0x15; head[2] = 0x41; head[3] = 0x64
+    head[4] = 1; head[5] = 2; head[6] = 1; head[7] = 35
+    let xurl = URL(fileURLWithPath: "\(scratch)/wrapped.x64")
+    try? FileManager.default.removeItem(at: xurl)
+    try (Data(head) + Data(contentsOf: source)).write(to: xurl)
+    let x = try CBMDiskImage(url: xurl)
+    let plain = try CBMDiskImage(url: source)
+    check(x.formatName.hasPrefix("X64"), "an X64 says what it is: \(x.formatName)")
+    check(x.entries.map(\.displayName) == plain.entries.map(\.displayName),
+          "and lists the same \(x.entries.count) files as the D64 it wraps")
+    check(try x.read(x.entries[0]) == plain.read(plain.entries[0]), "with the same bytes in them")
+    check(x.blocksFree == plain.blocksFree, "and the same \(x.blocksFree) blocks free")
+    try x.write(name: PETSCII.cbmName(fromASCII: "added"), type: .prg, data: Data([1, 8, 9, 9]))
+    try x.save()
+    let after = try Data(contentsOf: xurl)
+    check(Array(after.prefix(8)) == Array(head.prefix(8)), "the X64 header survives a write")
+    check(after.count == 64 + 174_848, "and the body is still a whole D64")
+} catch {
+    print("  FAIL other geometries: \(error)"); failures += 1
+}
+
 print("\n=== disk full handling")
 do {
     let path = "\(scratch)/full.d64"

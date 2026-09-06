@@ -186,9 +186,10 @@ struct TextPromptSheet: View {
 struct NewImageSheet: View {
     let palette: Palette
     let onCancel: () -> Void
-    let onConfirm: (CBMDiskImage.BlankFormat, String, String, String) -> Void
+    let onConfirm: (CBMDiskImage.BlankFormat, Int, String, String, String) -> Void
 
     @State private var kind: CBMDiskImage.BlankFormat = .d64
+    @State private var tracks = CBMDiskImage.BlankFormat.d64.defaultTracks
     @State private var fileName = "new"
     @State private var diskName = "new disk"
     @State private var diskID = "01"
@@ -200,13 +201,21 @@ struct NewImageSheet: View {
                     confirmTitle: "Create",
                     confirmDisabled: fileName.trimmingCharacters(in: .whitespaces).isEmpty,
                     onCancel: onCancel,
-                    onConfirm: { onConfirm(kind, fileName, diskName, diskID) }) {
+                    onConfirm: { onConfirm(kind, tracks, fileName, diskName, diskID) }) {
             VStack(alignment: .leading, spacing: 10) {
                 Picker("Format", selection: $kind) {
                     ForEach(CBMDiskImage.BlankFormat.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                Text(kind.subtitle)
+                // Only the D64 has a choice to make; the others would be a
+                // picker with one option in it.
+                if kind.trackChoices.count > 1 {
+                    Picker("Tracks", selection: $tracks) {
+                        ForEach(kind.trackChoices, id: \.self) { Text("\($0)").tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                Text(kind.subtitle(tracks: tracks))
                     .font(.system(size: 10))
                     .foregroundStyle(palette.color(.dim))
                 LabeledContent("File name") {
@@ -223,6 +232,9 @@ struct NewImageSheet: View {
             }
         }
         .onAppear { focused = true }
+        // Each format has its own track counts, so a choice made under one of
+        // them cannot be carried over to the next.
+        .onChange(of: kind) { _, new in tracks = new.defaultTracks }
     }
 }
 

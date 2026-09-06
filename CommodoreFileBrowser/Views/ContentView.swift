@@ -158,9 +158,10 @@ struct ContentView: View {
         case .newImage:
             NewImageSheet(palette: palette,
                           onCancel: { model.sheet = nil },
-                          onConfirm: { kind, file, name, id in
+                          onConfirm: { kind, tracks, file, name, id in
                               model.sheet = nil
-                              model.performNewImage(kind: kind, fileName: file, diskName: name, diskID: id)
+                              model.performNewImage(kind: kind, tracks: tracks, fileName: file,
+                                                    diskName: name, diskID: id)
                           })
         case .diskHeader:
             DiskHeaderSheet(palette: palette,

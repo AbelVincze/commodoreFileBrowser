@@ -531,12 +531,13 @@ final class AppModel: ObservableObject {
         sheet = .newImage
     }
 
-    func performNewImage(kind: CBMDiskImage.BlankFormat, fileName: String, diskName: String, diskID: String) {
+    func performNewImage(kind: CBMDiskImage.BlankFormat, tracks: Int, fileName: String,
+                         diskName: String, diskID: String) {
         guard case .directory(let dir) = activePanel.location else { return }
         var name = fileName
         if !name.lowercased().hasSuffix(".\(kind.fileExtension)") { name += ".\(kind.fileExtension)" }
         do {
-            try CBMDiskImage.createBlank(kind,
+            try CBMDiskImage.createBlank(kind, tracks: tracks,
                                          name: PETSCII.cbmName(fromASCII: diskName),
                                          id: PETSCII.petscii(fromASCII: diskID.isEmpty ? "01" : diskID),
                                          at: dir.appendingPathComponent(name))

@@ -560,27 +560,50 @@ final class CBMDiskImage: DiskImage {
         case d64 = "D64", d71 = "D71", d81 = "D81"
         var id: String { rawValue }
         var fileExtension: String { rawValue.lowercased() }
-        var subtitle: String {
+
+        /// Track counts the format can be made at. A 1541 disk was formatted to
+        /// 35, but the drive could be pushed to 40 or 42 and images of that are
+        /// common; the other two formats have one size each.
+        var trackChoices: [Int] {
             switch self {
-            case .d64: return "1541 - 35 tracks, 664 blocks free"
+            case .d64: return [35, 40, 42]
+            case .d71: return [70]
+            case .d81: return [80]
+            }
+        }
+
+        var defaultTracks: Int { trackChoices[0] }
+
+        func subtitle(tracks: Int) -> String {
+            switch self {
+            case .d64:
+                let base = "1541 - \(tracks) tracks, 664 blocks free"
+                // The BAM a 1541 writes only reaches track 35. The sectors past
+                // it are in the file and are left alone, but nothing here — or
+                // on an unextended drive — will put a file on them.
+                return tracks > 35 ? base + " (36-\(tracks) need an extended DOS)" : base
             case .d71: return "1571 - 70 tracks, 1328 blocks free"
             case .d81: return "1581 - 80 tracks, 3160 blocks free"
             }
         }
     }
 
-    /// Write a freshly formatted, empty image to disk.
-    static func createBlank(_ kind: BlankFormat, name: [UInt8], id: [UInt8], at url: URL) throws {
+    /// Write a freshly formatted, empty image to disk. `tracks` is only a
+    /// choice for a D64; the others are clamped to the one size they have.
+    static func createBlank(_ kind: BlankFormat, tracks: Int? = nil,
+                            name: [UInt8], id: [UInt8], at url: URL) throws {
+        let trackCount = kind.trackChoices.contains(tracks ?? -1) ? tracks! : kind.defaultTracks
         let format: Format
-        let size: Int
         switch kind {
-        case .d64: format = .d64(tracks: 35); size = 174_848
-        case .d71: format = .d71; size = 349_696
-        case .d81: format = .d81; size = 819_200
+        case .d64: format = .d64(tracks: trackCount)
+        case .d71: format = .d71
+        case .d81: format = .d81
         }
 
+        // 683 sectors to track 35, then 17 a track: 174,848 bytes at 35,
+        // 196,608 at 40 and 205,312 at 42.
+        let size = (1...trackCount).reduce(0) { $0 + sectorsPerTrack($1, format: format) } * 256
         var bytes = [UInt8](repeating: 0, count: size)
-        let trackCount: Int = { if case .d64(let t) = format { return t }; return kind == .d71 ? 70 : 80 }()
 
         func offset(_ track: Int, _ sector: Int) -> Int {
             var base = 0

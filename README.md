@@ -58,7 +58,7 @@ because the names are never converted to ASCII for display.
 | `Esc` | go up **without** saving the image |
 | `⌘S` | save the open image without leaving it |
 | `F1` | help |
-| `F2` | new disk image (D64 / D71 / D81) |
+| `F2` | new disk image (D64 at 35/40/42 tracks, D71, D81) |
 | `F3` | view the file under the cursor |
 | `⇧F3` | view it as a bitmap |
 | `F4` | edit the disk header |
@@ -390,6 +390,13 @@ Writing allocates blocks outwards from the directory track with the normal
 interleave, grows the directory by a sector when the current one fills up, and
 keeps the BAM free counts in step. `F2` formats a blank image with the correct
 free block count for its type (664 / 1328 / 3160).
+
+A D64 can be formatted at 35, 40 or 42 tracks — 174,848, 196,608 and 205,312
+bytes. The extra tracks are in the file and are read back, but the BAM a 1541
+writes only reaches track 35, so all three still report 664 blocks free and
+nothing here puts a file past track 35. That matches the drive: reaching those
+tracks needs a DOS that was extended to know about them, and the extended DOSes
+do not agree on where to keep their free counts.
 
 ## Commodore menu
 

@@ -658,6 +658,46 @@ do {
 
     csid_scope_enable(0)
 
+    // A D64 can be made at 35, 40 or 42 tracks. The extra ones are in the file
+    // and reachable, but the BAM a 1541 writes stops at 35, so nothing is ever
+    // put on them and the free count does not move.
+    do {
+        for tracks in [35, 40, 42] {
+            let url = URL(fileURLWithPath: "\(scratch)/blank-\(tracks).d64")
+            try? FileManager.default.removeItem(at: url)
+            try CBMDiskImage.createBlank(.d64, tracks: tracks,
+                                         name: PETSCII.cbmName(fromASCII: "wide"),
+                                         id: PETSCII.petscii(fromASCII: "01"), at: url)
+            let size = (try Data(contentsOf: url)).count
+            let expected = [35: 174_848, 40: 196_608, 42: 205_312][tracks]!
+            check(size == expected, "\(tracks) tracks is \(size) bytes")
+
+            let img = try CBMDiskImage(url: url)
+            check(img.formatName == "D64 (\(tracks) tracks)", "reads back as \(img.formatName)")
+            check(img.blocksFree == 664, "\(tracks) tracks still shows 664 blocks free")
+            check(img.integrityNote == nil, "\(tracks) tracks formats with a consistent BAM")
+            check(PETSCII.ascii(PETSCII.trimPadding(img.diskName)) == "wide",
+                  "\(tracks) tracks keeps its header")
+
+            // It has to hold files like any other image.
+            try img.write(name: PETSCII.cbmName(fromASCII: "a file"), type: .prg,
+                          data: Data([0x01, 0x08, 1, 2, 3]))
+            try img.save()
+            let reread = try CBMDiskImage(url: url)
+            check(reread.entries.count == 1 && reread.entries[0].displayName == "a file",
+                  "\(tracks) tracks takes a file")
+            check((try Data(contentsOf: url)).count == expected,
+                  "\(tracks) tracks did not change size when written to")
+        }
+        // A choice the format does not offer falls back rather than writing a
+        // file of some size nothing can read.
+        let url = URL(fileURLWithPath: "\(scratch)/blank-odd.d64")
+        try? FileManager.default.removeItem(at: url)
+        try CBMDiskImage.createBlank(.d64, tracks: 37, name: PETSCII.cbmName(fromASCII: "odd"),
+                                     id: PETSCII.petscii(fromASCII: "01"), at: url)
+        check((try Data(contentsOf: url)).count == 174_848, "an unoffered track count falls back to 35")
+    }
+
     // Case decides which form of a letter is stored: lower case the unshifted
     // one a machine types by default, upper case the shifted one. Both survive
     // the round trip, which is what lets a name be given in mixed case.

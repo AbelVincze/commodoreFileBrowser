@@ -52,7 +52,7 @@ enum AboutPanel {
             ]))
         }
 
-        add(summary + "\n\n", size: 11, colour: .labelColor)
+        // add(summary + "\n\n", size: 11, colour: .labelColor)
 
         for engine in engines {
             add(engine + "\n", size: 10, colour: .secondaryLabelColor)

@@ -194,6 +194,15 @@ struct ContentView: View {
                                onClose: { model.player.stop(); model.sheet = nil })
                     .id(request.id)
             }
+        case .module:
+            if let request = model.moduleRequest {
+                // .id rebuilds the contents for a new module while the sheet
+                // itself stays presented, as the SID sheet does.
+                ModulePlayerSheet(request: request, palette: palette,
+                                  player: model.modulePlayer, settings: settings,
+                                  onClose: { model.modulePlayer.unload(); model.sheet = nil })
+                    .id(request.id)
+            }
         case .viewer(let content):
             ViewerSheet(content: content, palette: palette, settings: settings,
                         onClose: { model.sheet = nil })

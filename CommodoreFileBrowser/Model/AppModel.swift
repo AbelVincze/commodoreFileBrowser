@@ -36,6 +36,7 @@ enum AppSheet: Identifiable {
     case viewer(ViewerContent)
     case addDecoration
     case player
+    case module
     case discardChanges
     case help
 
@@ -50,6 +51,7 @@ enum AppSheet: Identifiable {
         case .viewer(let v): return "viewer-\(v.id)"
         case .addDecoration: return "decorate"
         case .player: return "player"
+        case .module: return "module"
         case .discardChanges: return "discard"
         case .help: return "help"
         }
@@ -62,6 +64,7 @@ final class AppModel: ObservableObject {
     let right = PanelModel(side: .right)
     let settings: SettingsStore
     let player = SIDPlayer()
+    let modulePlayer = ModulePlayer()
 
     @Published var activeSide: PanelSide = .left
     @Published var sheet: AppSheet?
@@ -70,6 +73,9 @@ final class AppModel: ObservableObject {
     /// The tune the player sheet is showing. Held apart from `sheet` so it can
     /// change while the sheet stays up.
     @Published var playerRequest: SIDRequest?
+    /// The module the tracker sheet is showing, held apart from `sheet` for
+    /// the same reason.
+    @Published var moduleRequest: ModuleRequest?
 
     var activePanel: PanelModel { activeSide == .left ? left : right }
     var inactivePanel: PanelModel { activeSide == .left ? right : left }
@@ -238,6 +244,13 @@ final class AppModel: ObservableObject {
                 return
             }
             let detected = manual ? nil : SIDTuneLoader.detect(name: item.title, data: bytes)
+            // A tracker module is the other thing Return plays, and the only
+            // way to know one is to look inside it — Amiga modules are named
+            // mod.something, or nothing at all.
+            if !manual, detected == nil, let module = ModuleLoader.detect(bytes) {
+                beginModulePlay(module, named: item.title)
+                return
+            }
             // Say what to press instead, since Return otherwise looks as though
             // it did nothing at all.
             if requireTune, detected == nil { statusMessage = Self.notATuneHint; return }
@@ -251,6 +264,22 @@ final class AppModel: ObservableObject {
     }
 
     private static let notATuneHint = "Not a recognised tune - ⇧⏎ for the player, ⌘O to open it"
+
+    /// Open the tracker sheet on a module the browser has identified.
+    ///
+    /// Identifying one and playing it are different questions: the formats are
+    /// recognised from their own bytes, and some of those — the Amiga chiptune
+    /// players among them — have no engine here yet. Saying so in the status
+    /// line is better than a sheet that cannot start, and matches what Return
+    /// does when a file is not a tune at all.
+    private func beginModulePlay(_ module: Module, named name: String) {
+        guard modulePlayer.load(module) else {
+            statusMessage = "\(module.format.name) module - no player for this format yet"
+            return
+        }
+        moduleRequest = ModuleRequest(name: name, module: module)
+        sheet = .module
+    }
 
     // MARK: - Handing a file to the system
 

@@ -51,6 +51,23 @@ void cmod_set_repeat(int on);
 void cmod_set_gain(int millibel);
 void cmod_set_stereo_separation(int percent);
 
+/// Whether the tempo can be changed at all: it comes from libopenmpt's
+/// extended interface, which not every build has to provide.
+int cmod_can_set_tempo(void);
+
+/// How fast the module is stepped through its patterns, 1 being its own tempo.
+/// The samples still come out at the render rate, so this is speed without a
+/// change of pitch. Clamped to 0.25...4: libopenmpt throws outside that rather
+/// than clamping, and a thrown factor is one that never gets applied.
+void cmod_set_tempo_factor(double factor);
+
+/// Where in the order list playback is, and how long that list is. This is
+/// the module's own idea of where it has got to, and it is what moves when the
+/// tempo factor is raised — the position in seconds counts audio rendered, so
+/// it does not.
+int cmod_current_order(void);
+int cmod_order_count(void);
+
 /// Per-voice levels for the oscilloscope, 0 to 1, as of the last render.
 int cmod_voice_count(void);
 double cmod_voice_level(int voice);

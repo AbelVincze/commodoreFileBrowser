@@ -340,7 +340,6 @@ struct SIDPlayerSheet: View {
 
         // Named apart from the settings store, which this function also writes.
         var video = SIDVideoExporter.Settings()
-        video.mode = scopeMode
         video.seconds = seconds
         video.size = VideoFormat.size(exportResolution, exportAspect)
         video.foreground = NSColor(palette.color(.text)).cgColor
@@ -350,9 +349,11 @@ struct SIDPlayerSheet: View {
         exportProgress = 0
         exportedTo = nil
         let player = self.player
+        let mode = scopeMode
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                try SIDVideoExporter.export(tune: tune, player: player, settings: video, to: url) {
+                let source = SIDVideoExporter.source(tune: tune, player: player, mode: mode)
+                try SIDVideoExporter.export(source: source, settings: video, to: url) {
                     exportProgress = $0
                 }
                 DispatchQueue.main.async {

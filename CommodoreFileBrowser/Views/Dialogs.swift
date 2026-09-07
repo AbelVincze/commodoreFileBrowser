@@ -566,8 +566,8 @@ struct HelpSheet: View {
             ("⇧Return", "Force the SID player on, entering addresses by hand"),
             ("Space", "Play or pause, in either player"),
             ("⌘↑ ⌘↓", "Previous or next file, without leaving the player"),
-            ("⌘← ⌘→", "Step the SID song byte, restarting on that song"),
-            ("", "The SID player has a scope, and exports it as video"),
+            ("⌘← ⌘→", "Step the song: the SID byte, or a module's subsong"),
+            ("", "Either player has a scope, and exports it as video"),
         ]),
         Section(title: "Appearance", rows: [
             ("Ctrl-Shift / ⇧⌘C", "Switch the Commodore font between upper and lower case"),

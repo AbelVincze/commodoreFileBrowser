@@ -1,6 +1,17 @@
 import Foundation
 import AVFoundation
 
+/// What the module oscilloscope draws. There is no per-voice equivalent of the
+/// SID's: libopenmpt reports a level per channel but not the samples behind it,
+/// and c-flod reports nothing at all, so what is drawn is the output — which is
+/// also the one thing both engines have.
+enum ModuleScopeMode: String, CaseIterable, Identifiable {
+    case mix, stereo
+    var id: String { rawValue }
+    var label: String { self == .mix ? "Mixed" : "Left / right" }
+    var traceCount: Int { self == .mix ? 1 : 2 }
+}
+
 /// Drives the vendored module engines from an audio render callback.
 ///
 /// Shaped like `SIDPlayer` next door, and for the same reason: the engines are
@@ -13,10 +24,21 @@ import AVFoundation
 /// formats, where the file is a player routine with its data rather than a
 /// pattern table. Which one has it changes what can be said about the module:
 /// c-flod knows neither how long a tune runs nor where it has got to, so the
-/// sheet shows no clock for those and cannot seek them.
+/// sheet shows no clock for those and cannot seek them, and its pattern rate
+/// cannot be changed so there is no fast forward either.
 final class ModulePlayer: ObservableObject {
 
     static let sampleRate = 44100.0
+
+    /// Held down, the module is stepped through its patterns four times as fast
+    /// while the samples still come out at the render rate: speed without a
+    /// change of pitch. Only libopenmpt can be told this, and four is its
+    /// ceiling — it throws above that rather than clamping, so asking for the
+    /// SID player's ten would apply nothing at all.
+    static let fastForwardFactor = 4.0
+    /// Four times the pattern rate at full level is harsh, so it plays at half
+    /// while the key is held. The slider does not move for it.
+    static let fastForwardGain: Float = 0.5
 
     /// Which engine has the module.
     enum Engine { case openMPT, cflod }
@@ -24,6 +46,9 @@ final class ModulePlayer: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var module: Module?
     @Published private(set) var engine_: Engine = .openMPT
+    @Published private(set) var isFastForwarding = false
+    /// A tune whose pattern rate cannot be changed cannot be fast forwarded.
+    var canFastForward: Bool { engine_ == .openMPT && cmod_can_set_tempo() == 1 }
     /// Whether the position and the length are known. c-flod reports neither.
     var isSeekable: Bool { engine_ == .openMPT && duration > 0 }
 
@@ -37,6 +62,9 @@ final class ModulePlayer: ObservableObject {
     @Published private(set) var samples = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var subsongs = 0
+    /// Which song inside the module is playing, so the arrows can step it and
+    /// the sheet's picker follows when they do.
+    @Published private(set) var currentSubsong = 0
 
     /// Where playback has got to, in seconds. Read from the engine on the main
     /// thread rather than counted in the render block: libopenmpt keeps the
@@ -76,6 +104,16 @@ final class ModulePlayer: ObservableObject {
     private let targetGain: UnsafeMutablePointer<Float>
     private let currentGain: UnsafeMutablePointer<Float>
 
+    /// The oscilloscope tap. The SID engine keeps its own ring inside the C,
+    /// per voice; here there is nothing to tap but the output, so the ring is
+    /// filled in the render block from what was just handed to the speakers.
+    /// Two channels of it, written as plain pointers so the audio thread never
+    /// touches Swift state.
+    static let scopeLength = 2048
+    private let scopeRing: UnsafeMutablePointer<Int16>      // interleaved, as rendered
+    private let scopePosition: UnsafeMutablePointer<Int>
+    private let scopeOn: UnsafeMutablePointer<Bool>
+
     init() {
         lock = .allocate(capacity: 1)
         lock.initialize(to: os_unfair_lock())
@@ -89,6 +127,12 @@ final class ModulePlayer: ObservableObject {
         targetGain.initialize(to: 1)
         currentGain = .allocate(capacity: 1)
         currentGain.initialize(to: 1)
+        scopeRing = .allocate(capacity: Self.scopeLength * 2)
+        scopeRing.initialize(repeating: 0, count: Self.scopeLength * 2)
+        scopePosition = .allocate(capacity: 1)
+        scopePosition.initialize(to: 0)
+        scopeOn = .allocate(capacity: 1)
+        scopeOn.initialize(to: false)
     }
 
     deinit {
@@ -99,6 +143,9 @@ final class ModulePlayer: ObservableObject {
         onCflod.deallocate()
         targetGain.deallocate()
         currentGain.deallocate()
+        scopeRing.deallocate()
+        scopePosition.deallocate()
+        scopeOn.deallocate()
         lock.deallocate()
     }
 
@@ -130,6 +177,7 @@ final class ModulePlayer: ObservableObject {
             samples = Int(cmod_samples())
             duration = cmod_duration()
             subsongs = Int(cmod_subsong_count())
+            currentSubsong = 0
             position = 0
             ended.pointee = false
             cmod_set_repeat(repeats ? 1 : 0)
@@ -158,6 +206,7 @@ final class ModulePlayer: ObservableObject {
         instruments = 0; samples = 0
         duration = 0                    // unknown, so the sheet shows no clock
         subsongs = Int(cflod_subsong_count())
+        currentSubsong = 0
         position = 0
         ended.pointee = false
         return true
@@ -166,7 +215,7 @@ final class ModulePlayer: ObservableObject {
     private func clearDetails() {
         type = ""; tracker = ""; innerTitle = ""
         channels = 0; instruments = 0; samples = 0
-        duration = 0; subsongs = 0; position = 0
+        duration = 0; subsongs = 0; currentSubsong = 0; position = 0
     }
 
     func play() {
@@ -184,6 +233,7 @@ final class ModulePlayer: ObservableObject {
 
     /// Silence, but stay where the module is: playing again picks up from here.
     func pause() {
+        setFastForward(false)
         ticker?.invalidate(); ticker = nil
         if engine.isRunning { engine.stop() }
         isPlaying = false
@@ -212,6 +262,21 @@ final class ModulePlayer: ObservableObject {
 
     func toggle() { isPlaying ? pause() : play() }
 
+    /// Fast forward, for as long as the key is held.
+    ///
+    /// libopenmpt's own tempo factor rather than anything of ours: the module
+    /// is stepped through its patterns ten times as fast while the samples
+    /// still come out at the render rate, so it races without changing pitch,
+    /// and the position it reports races with it. A c-flod tune has no such
+    /// control, so it is not offered one.
+    func setFastForward(_ on: Bool) {
+        guard on != isFastForwarding, module != nil, canFastForward else { return }
+
+        isFastForwarding = on
+        apply { cmod_set_tempo_factor(on ? Self.fastForwardFactor : 1) }
+        applyGain()
+    }
+
     func seek(to seconds: Double) {
         guard engine_ == .openMPT else { return }
         apply { cmod_seek(max(0, min(seconds, duration))) }
@@ -223,6 +288,7 @@ final class ModulePlayer: ObservableObject {
     /// the same way choosing a SID subtune runs init again.
     func selectSubsong(_ index: Int) {
         guard index >= 0, index < subsongs else { return }
+        currentSubsong = index
         apply {
             if engine_ == .openMPT {
                 cmod_set_subsong(Int32(index))
@@ -243,6 +309,79 @@ final class ModulePlayer: ObservableObject {
         return (0..<Int(cmod_voice_count())).map { cmod_voice_level(Int32($0)) }
     }
 
+    // MARK: - Oscilloscope
+
+    /// Capture costs a copy per buffer, so it is only on while something is
+    /// drawing it.
+    func setScope(enabled: Bool) {
+        scopeOn.pointee = enabled
+        guard enabled else { return }
+        scopeRing.update(repeating: 0, count: Self.scopeLength * 2)
+        scopePosition.pointee = 0
+    }
+
+    /// The traces the scope draws, oldest sample first. Read without the lock:
+    /// a torn read costs one ragged frame, which is not worth stalling the
+    /// audio thread for — the same trade the SID player makes.
+    func scopeSnapshot(mode: ModuleScopeMode) -> [[Int16]] {
+        let length = Self.scopeLength
+        var left = [Int16](repeating: 0, count: length)
+        var right = [Int16](repeating: 0, count: length)
+        var p = scopePosition.pointee % length
+        for i in 0..<length {
+            left[i] = scopeRing[p * 2]
+            right[i] = scopeRing[p * 2 + 1]
+            p = (p + 1) % length
+        }
+        guard mode == .mix else { return [left, right] }
+        // Halved before summing, so a mix cannot clip where neither side does.
+        var mixed = [Int16](repeating: 0, count: length)
+        for i in 0..<length {
+            mixed[i] = Int16(Int(left[i]) / 2 + Int(right[i]) / 2)
+        }
+        return [mixed]
+    }
+
+    // MARK: - Rendering for the video export
+
+    /// Rewind to the top without touching the audio graph.
+    func prepareForOfflineRender() {
+        apply {
+            if engine_ == .openMPT { cmod_set_tempo_factor(1); cmod_seek(0) }
+            else { cflod_set_subsong(0) }
+        }
+        position = 0
+        ended.pointee = false
+    }
+
+    /// Render `frames` of interleaved stereo straight from the engine, feeding
+    /// the scope as the audio thread would. The caller must not be playing.
+    func renderOffline(frames: Int, into buffer: inout [Int16]) {
+        buffer.withUnsafeMutableBufferPointer { out in
+            guard let base = out.baseAddress else { return }
+            _ = engine_ == .cflod ? cflod_render(base, Int32(frames))
+                                  : cmod_render(base, Int32(frames))
+            Self.capture(base, frames: frames,
+                         ring: scopeRing, position: scopePosition, on: scopeOn)
+        }
+    }
+
+    /// Copy a rendered buffer into the scope ring. Static and pointer-only so
+    /// the render block can call it without touching `self`.
+    private static func capture(_ samples: UnsafePointer<Int16>, frames: Int,
+                                ring: UnsafeMutablePointer<Int16>,
+                                position: UnsafeMutablePointer<Int>,
+                                on: UnsafeMutablePointer<Bool>) {
+        guard on.pointee else { return }
+        var p = position.pointee
+        for i in 0..<frames {
+            ring[(p % scopeLength) * 2] = samples[i * 2]
+            ring[(p % scopeLength) * 2 + 1] = samples[i * 2 + 1]
+            p += 1
+        }
+        position.pointee = p % scopeLength
+    }
+
     // MARK: - Plumbing
 
     /// Anything that touches the engine has to hold the render block out.
@@ -256,7 +395,8 @@ final class ModulePlayer: ObservableObject {
     /// lock: at worst it reads the old level for one buffer, and the ramp there
     /// covers even that.
     private func applyGain() {
-        targetGain.pointee = Float(max(0, min(1, volume)))
+        let asked = Float(max(0, min(1, volume)))
+        targetGain.pointee = isFastForwarding ? asked * Self.fastForwardGain : asked
     }
 
     /// The position display, and noticing that the module has run out. Four
@@ -284,6 +424,9 @@ final class ModulePlayer: ObservableObject {
         let cflod = self.onCflod
         let wanted = self.targetGain
         let reached = self.currentGain
+        let ring = self.scopeRing
+        let ringPosition = self.scopePosition
+        let capturing = self.scopeOn
 
         let node = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
@@ -305,6 +448,10 @@ final class ModulePlayer: ObservableObject {
                 let got = Int(cflod.pointee ? cflod_render(scratch, Int32(chunk))
                                             : cmod_render(scratch, Int32(chunk)))
                 if got < chunk { finished.pointee = true }
+                // Before the gain, so the trace shows the module rather than
+                // how loud it is being played.
+                ModulePlayer.capture(scratch, frames: chunk,
+                                     ring: ring, position: ringPosition, on: capturing)
                 // libopenmpt gives interleaved stereo; the node wants a plane
                 // per channel.
                 for i in 0..<chunk {

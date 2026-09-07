@@ -215,6 +215,8 @@ final class SettingsStore: ObservableObject {
     @Published var scopeEnabled: Bool { didSet { save() } }
     /// Stored as the raw value so the settings store stays clear of the views.
     @Published var scopeMode: String { didSet { save() } }
+    /// The module scope has its own two modes, so it needs its own setting.
+    @Published var moduleScopeMode: String { didSet { save() } }
     @Published var sidVolume: Double { didSet { save() } }
     /// Video export choices, stored as raw values for the same reason.
     @Published var exportResolution: String { didSet { save() } }
@@ -236,6 +238,7 @@ final class SettingsStore: ObservableObject {
         var sidModel: Int?
         var scopeEnabled: Bool?
         var scopeMode: String?
+        var moduleScopeMode: String?
         var sidVolume: Double?
         var exportResolution: String?
         var exportAspect: String?
@@ -262,6 +265,7 @@ final class SettingsStore: ObservableObject {
         sidModel = stored?.sidModel ?? 8580
         scopeEnabled = stored?.scopeEnabled ?? false
         scopeMode = stored?.scopeMode ?? "voices"
+        moduleScopeMode = stored?.moduleScopeMode ?? ModuleScopeMode.mix.rawValue
         sidVolume = stored?.sidVolume ?? 1
         exportResolution = stored?.exportResolution ?? VideoResolution.p720.rawValue
         exportAspect = stored?.exportAspect ?? VideoAspect.sixteenNine.rawValue
@@ -277,6 +281,7 @@ final class SettingsStore: ObservableObject {
                             bitmapMagnification: bitmapMagnification, bitmapInvert: bitmapInvert,
                             viewerUsesC64Offsets: viewerUsesC64Offsets,
                             sidModel: sidModel, scopeEnabled: scopeEnabled, scopeMode: scopeMode,
+                            moduleScopeMode: moduleScopeMode,
                             sidVolume: sidVolume, exportResolution: exportResolution,
                             exportAspect: exportAspect, exportSeconds: exportSeconds)
         if let data = try? JSONEncoder().encode(stored) {

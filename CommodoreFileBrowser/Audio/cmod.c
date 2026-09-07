@@ -8,10 +8,18 @@
 #include <string.h>
 
 #include "libopenmpt/libopenmpt/libopenmpt.h"
+#include "libopenmpt/libopenmpt/libopenmpt_ext.h"
 
 #include "cmod.h"
 
+// Opened through the extended interface rather than the plain one. Everything
+// here works on the plain handle it hands back; the extension is only for the
+// tempo factor, which is not a render parameter or a ctl but lives behind the
+// "interactive" interface.
+static openmpt_module_ext *extended;
 static openmpt_module *module;
+static openmpt_module_ext_interface_interactive interactive;
+static int has_interactive;
 static int rate = 44100;
 
 // libopenmpt hands out strings the caller has to free. Holding the last of
@@ -33,7 +41,10 @@ static void take(char **slot, const char *owned) {
 static const char *or_empty(const char *s) { return s ? s : ""; }
 
 void cmod_close(void) {
-    if (module) { openmpt_module_destroy(module); module = NULL; }
+    if (extended) { openmpt_module_ext_destroy(extended); extended = NULL; }
+    module = NULL;
+    memset(&interactive, 0, sizeof(interactive));
+    has_interactive = 0;
     take(&type_string, NULL);
     take(&tracker_string, NULL);
     take(&title_string, NULL);
@@ -49,11 +60,16 @@ int cmod_open(const unsigned char *data, int length, int samplerate) {
     // Silent logging: a file the browser offers is one it already believes in,
     // and a format libopenmpt does not know is answered by the return value,
     // not by a line on the console.
-    module = openmpt_module_create_from_memory2(data, (size_t)length,
-                                                openmpt_log_func_silent, NULL,
-                                                openmpt_error_func_ignore, NULL,
-                                                NULL, NULL, NULL);
-    if (!module) return 0;
+    extended = openmpt_module_ext_create_from_memory(data, (size_t)length,
+                                                     openmpt_log_func_silent, NULL,
+                                                     openmpt_error_func_ignore, NULL,
+                                                     NULL, NULL, NULL);
+    if (!extended) return 0;
+    module = openmpt_module_ext_get_module(extended);
+    if (!module) { cmod_close(); return 0; }
+    has_interactive = openmpt_module_ext_get_interface(
+        extended, LIBOPENMPT_EXT_C_INTERFACE_INTERACTIVE,
+        &interactive, sizeof(interactive)) != 0;
 
     take(&type_string, openmpt_module_get_metadata(module, "type"));
     take(&tracker_string, openmpt_module_get_metadata(module, "tracker"));
@@ -121,6 +137,24 @@ void cmod_set_stereo_separation(int percent) {
             OPENMPT_MODULE_RENDER_STEREOSEPARATION_PERCENT, percent);
     }
 }
+
+int cmod_can_set_tempo(void) { return has_interactive && interactive.set_tempo_factor != NULL; }
+
+void cmod_set_tempo_factor(double factor) {
+    // libopenmpt's own fast forward: the module is stepped through its patterns
+    // faster while the samples still come out at the render rate, so it plays
+    // quicker without changing pitch. Held to the range the library documents.
+    // libopenmpt throws outside this range rather than clamping, and a thrown
+    // factor is one that never gets applied at all — which is exactly how a
+    // fast forward can look like it is running while nothing moves.
+    if (!cmod_can_set_tempo()) return;
+    if (factor < 0.25) factor = 0.25;
+    if (factor > 4.0) factor = 4.0;
+    interactive.set_tempo_factor(extended, factor);
+}
+
+int cmod_current_order(void) { return module ? openmpt_module_get_current_order(module) : 0; }
+int cmod_order_count(void) { return module ? openmpt_module_get_num_orders(module) : 0; }
 
 int cmod_voice_count(void) { return voice_count; }
 

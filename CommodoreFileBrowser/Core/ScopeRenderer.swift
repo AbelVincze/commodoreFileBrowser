@@ -66,8 +66,12 @@ enum ScopeRenderer {
         return index - window / 2
     }
 
-    static func draw(in ctx: CGContext, size: CGSize, mode: ScopeMode, sidCount: Int,
-                     samples: [Int: [Int16]], foreground: CGColor, background: CGColor,
+    /// Draw an ordered list of traces, filled across `columns` and down as many
+    /// rows as they need. This is the whole of the drawing; what differs
+    /// between the two players is only which traces they hand over and how they
+    /// are arranged, which each of them decides for itself.
+    static func draw(in ctx: CGContext, size: CGSize, traces: [[Int16]], columns: Int,
+                     lineWidth: CGFloat, foreground: CGColor, background: CGColor,
                      grid gridColor: CGColor) {
         ctx.setFillColor(background)
         ctx.fill(CGRect(origin: .zero, size: size))
@@ -77,7 +81,8 @@ enum ScopeRenderer {
         // gaps between cells vanish. Anything smaller than the reference — the
         // live view — is left alone.
         let scale = max(1, size.height / 540)
-        let (rows, columns) = grid(mode: mode, sidCount: sidCount)
+        let columns = max(1, columns)
+        let rows = max(1, Int((Double(traces.count) / Double(columns)).rounded(.up)))
         let gap = 3 * scale
         let cellW = (size.width - gap * CGFloat(columns - 1)) / CGFloat(columns)
         let cellH = (size.height - gap * CGFloat(rows - 1)) / CGFloat(rows)
@@ -95,13 +100,16 @@ enum ScopeRenderer {
                 ctx.addLine(to: CGPoint(x: frame.maxX, y: frame.midY))
                 ctx.strokePath()
 
-                guard let data = samples[track(mode: mode, row: row, column: column)],
-                      data.count > 1 else { continue }
+                // Traces fill the grid in order, so a row can be short: the
+                // empty cells still get their zero line drawn.
+                let index = row * columns + column
+                guard index < traces.count, traces[index].count > 1 else { continue }
+                let data = traces[index]
                 let window = min(data.count, displayWindow)
                 let start = windowStart(data, window: window)
 
                 ctx.setStrokeColor(foreground)
-                ctx.setLineWidth((mode == .mix ? 1.5 : 1.2) * scale)
+                ctx.setLineWidth(lineWidth * scale)
                 ctx.beginPath()
                 // A column of pixels per step, but never more steps than there
                 // are samples to draw: past that the trace is a staircase of
@@ -117,6 +125,25 @@ enum ScopeRenderer {
                 ctx.strokePath()
             }
         }
+    }
+
+    /// The SID player's arrangement: one cell for the mix, or three rows of
+    /// voices with a column per chip.
+    static func draw(in ctx: CGContext, size: CGSize, mode: ScopeMode, sidCount: Int,
+                     samples: [Int: [Int16]], foreground: CGColor, background: CGColor,
+                     grid gridColor: CGColor) {
+        let (rows, columns) = grid(mode: mode, sidCount: sidCount)
+        // Row by row, since the traces are laid out in reading order and the
+        // SID's voices are numbered down a column.
+        var traces: [[Int16]] = []
+        for row in 0..<rows {
+            for column in 0..<columns {
+                traces.append(samples[track(mode: mode, row: row, column: column)] ?? [])
+            }
+        }
+        draw(in: ctx, size: size, traces: traces, columns: columns,
+             lineWidth: mode == .mix ? 1.5 : 1.2,
+             foreground: foreground, background: background, grid: gridColor)
     }
 }
 

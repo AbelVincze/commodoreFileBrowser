@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// What the tracker sheet is showing. Held apart from the sheet itself so the
 /// module can change while the sheet stays up, the same way `SIDRequest` is.
@@ -7,14 +8,17 @@ struct ModuleRequest: Identifiable {
     /// The file name, which is the fallback when the module carries no title.
     var name: String
     var module: Module
+    /// Folder an exported video goes to.
+    var destination: URL?
 }
 
 /// The transport for a tracker module. Closing it stops playback and lets go
 /// of the module, so nothing is left loaded in the engine.
 ///
-/// Shorter than the SID sheet on purpose: there is nothing to fill in. A SID
-/// file may need two addresses typed in before it will play at all, while a
-/// module carries its whole song, so the sheet opens playing.
+/// Laid out like the SID sheet, and for the same reasons: the same transport
+/// keys, the same oscilloscope and the same video export row. What it does not
+/// have is the SID sheet's form — a module carries its whole song, so there is
+/// nothing to fill in before it will play.
 struct ModulePlayerSheet: View {
     let request: ModuleRequest
     let palette: Palette
@@ -26,6 +30,30 @@ struct ModulePlayerSheet: View {
     /// reporting the old position until the drag ends, so the thumb would jump
     /// back under the finger without this.
     @State private var scrubbing: Double?
+    @State private var showScope: Bool
+    @State private var scopeMode: ModuleScopeMode
+    @State private var exportSeconds: String
+    @State private var exportResolution: VideoResolution
+    @State private var exportAspect: VideoAspect
+    @State private var exportProgress: Double?
+    @State private var exportedTo: String?
+    @State private var exportError: String?
+
+    init(request: ModuleRequest, palette: Palette, player: ModulePlayer,
+         settings: SettingsStore, onClose: @escaping () -> Void) {
+        self.request = request
+        self.palette = palette
+        _player = ObservedObject(wrappedValue: player)
+        _settings = ObservedObject(wrappedValue: settings)
+        self.onClose = onClose
+        _showScope = State(initialValue: settings.scopeEnabled)
+        _scopeMode = State(initialValue: ModuleScopeMode(rawValue: settings.moduleScopeMode) ?? .mix)
+        _exportSeconds = State(initialValue: String(Int(settings.exportSeconds)))
+        _exportResolution = State(initialValue:
+            VideoResolution(rawValue: settings.exportResolution) ?? .p720)
+        _exportAspect = State(initialValue:
+            VideoAspect(rawValue: settings.exportAspect) ?? .sixteenNine)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -36,18 +64,35 @@ struct ModulePlayerSheet: View {
                 Divider().overlay(palette.color(.border))
             }
             controls
+            if showScope {
+                Divider().overlay(palette.color(.border))
+                ScopeView(player: player, mode: scopeMode, palette: palette)
+                    .frame(height: scopeMode == .mix ? 90 : 180)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                Divider().overlay(palette.color(.border))
+                exportRow
+            }
             Divider().overlay(palette.color(.border))
             transport
         }
-        .frame(width: 460)
+        .frame(width: showScope ? 560 : 460)
         .controlSize(.small)
         .background(palette.color(.window))
         .onAppear {
+            player.setScope(enabled: showScope)
             player.volume = settings.sidVolume
             // Everything needed is already known, so start straight away.
             player.play()
         }
-        .onDisappear { player.unload() }
+        .onChange(of: showScope) { _, on in
+            player.setScope(enabled: on)
+            settings.scopeEnabled = on
+        }
+        .onChange(of: scopeMode) { _, mode in settings.moduleScopeMode = mode.rawValue }
+        .onChange(of: exportResolution) { _, value in settings.exportResolution = value.rawValue }
+        .onChange(of: exportAspect) { _, value in settings.exportAspect = value.rawValue }
+        .onDisappear { player.setScope(enabled: false); player.unload() }
     }
 
     // MARK: - Header
@@ -136,9 +181,11 @@ struct ModulePlayerSheet: View {
                 HStack(spacing: 8) {
                     Text("Song").frame(width: 78, alignment: .leading)
                         .foregroundStyle(palette.color(.dim))
+                    // Reads the player rather than a copy of its own, so
+                    // ⌘← and ⌘→ move the picker with them.
                     Picker("", selection: Binding(
-                        get: { currentSubsong },
-                        set: { player.selectSubsong($0); currentSubsong = $0 }
+                        get: { player.currentSubsong },
+                        set: { player.selectSubsong($0) }
                     )) {
                         ForEach(0..<player.subsongs, id: \.self) { Text("\($0 + 1)").tag($0) }
                     }
@@ -146,13 +193,6 @@ struct ModulePlayerSheet: View {
                     .frame(width: 90)
                     Spacer()
                 }
-            }
-
-            HStack(spacing: 8) {
-                Text("Volume").frame(width: 78, alignment: .leading)
-                    .foregroundStyle(palette.color(.dim))
-                Slider(value: $player.volume, in: 0...1)
-                    .onChange(of: player.volume) { _, value in settings.sidVolume = value }
             }
 
             // Amiga modules pan the voices hard left and right, which is how
@@ -167,13 +207,30 @@ struct ModulePlayerSheet: View {
                         .foregroundStyle(palette.color(.dim))
                         .frame(width: 34, alignment: .trailing)
                 }
-            }
 
-            // Both of these are libopenmpt's to give; a chiptune player routine
-            // takes no such instruction.
-            if player.engine_ == .openMPT {
+                // libopenmpt's to give; a chiptune player routine takes no such
+                // instruction.
                 Toggle("Repeat", isOn: $player.repeats)
                     .foregroundStyle(palette.color(.text))
+            }
+
+            HStack(spacing: 8) {
+                Toggle("Oscilloscope", isOn: $showScope)
+                Spacer(minLength: 0)
+                if showScope {
+                    Picker("", selection: $scopeMode) {
+                        ForEach(ModuleScopeMode.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 150)
+                }
+            }
+
+            if let exportError {
+                Text(exportError)
+                    .font(.system(size: 10))
+                    .foregroundStyle(palette.color(.marked))
             }
         }
         .font(.system(size: 11))
@@ -181,20 +238,164 @@ struct ModulePlayerSheet: View {
         .padding(.vertical, 10)
     }
 
-    @State private var currentSubsong = 0
+    // MARK: - Export
+
+    private var exportRow: some View {
+        HStack(spacing: 8) {
+            Text("Video").font(.system(size: 11)).frame(width: 42, alignment: .leading)
+            Picker("", selection: $exportResolution) {
+                ForEach(VideoResolution.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 132)
+            Picker("", selection: $exportAspect) {
+                ForEach(VideoAspect.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 92)
+            TextField("30", text: $exportSeconds)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 46)
+                .font(.system(size: 11, design: .monospaced))
+                .onSubmit { rememberExportSeconds() }
+            Text("seconds").font(.system(size: 10)).foregroundStyle(palette.color(.dim))
+            Spacer(minLength: 0)
+            if let exportProgress {
+                ProgressView(value: exportProgress).frame(width: 90)
+            } else {
+                Button("Export…", action: exportVideo)
+                    .buttonStyle(.bordered)
+                    .disabled(request.destination == nil)
+            }
+        }
+        .help("The export writes \(pictureSize)")
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottomLeading) {
+            if let exportedTo {
+                Text(exportedTo)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(palette.color(.dim))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .padding(.horizontal, 14)
+            }
+        }
+    }
+
+    private var pictureSize: String {
+        let size = VideoFormat.size(exportResolution, exportAspect)
+        return "\(Int(size.width)) × \(Int(size.height))"
+    }
+
+    /// A minute of 4K is a long wait, so the length is held to ten minutes.
+    @discardableResult private func rememberExportSeconds() -> Double {
+        let seconds = max(1, min(600, Double(exportSeconds) ?? settings.exportSeconds))
+        exportSeconds = String(Int(seconds))
+        settings.exportSeconds = seconds
+        return seconds
+    }
+
+    private func exportVideo() {
+        guard let folder = request.destination else { return }
+        let seconds = rememberExportSeconds()
+        let safeName = title.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "/", with: "-")
+        let url = folder.appendingPathComponent("\(safeName).mp4")
+
+        var video = SIDVideoExporter.Settings()
+        video.seconds = seconds
+        video.size = VideoFormat.size(exportResolution, exportAspect)
+        video.foreground = NSColor(palette.color(.text)).cgColor
+        video.background = NSColor(palette.color(.panel)).cgColor
+        video.grid = NSColor(palette.color(.border)).cgColor
+
+        exportProgress = 0
+        exportedTo = nil
+        exportError = nil
+        // The engine is ours alone for this, so the source is built here and
+        // the module is left rewound and silent afterwards.
+        let source = SIDVideoExporter.source(player: player, mode: scopeMode)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try SIDVideoExporter.export(source: source, settings: video, to: url) {
+                    exportProgress = $0
+                }
+                DispatchQueue.main.async {
+                    exportProgress = nil
+                    exportedTo = url.path
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    exportProgress = nil
+                    exportError = error.localizedDescription
+                }
+            }
+        }
+    }
 
     // MARK: - Transport
 
     private var transport: some View {
         HStack(spacing: 8) {
-            Button(player.isPlaying ? "Pause" : "Play") { player.toggle() }
+            // Left at the regular size while the rest of the sheet is small.
+            // These are what the sheet is for; everything above them is setup.
+            HStack(spacing: 8) {
+                Button { player.toggle() } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .frame(width: 18)
+                }
                 .keyboardShortcut(.space, modifiers: [])
-            Button("Stop") { player.stop() }
+                .help(player.isPlaying ? "Pause" : "Play")
+
+                Button { player.stop() } label: {
+                    Image(systemName: "stop.fill").frame(width: 18)
+                }
+                .help("Stop and rewind to the beginning")
+
+                // Held rather than clicked, so the gesture rather than the
+                // action is what drives it.
+                Button(action: {}) {
+                    Image(systemName: "forward.fill").frame(width: 18)
+                }
+                .disabled(!player.isPlaying || !player.canFastForward)
+                .help(player.canFastForward
+                      ? "Hold to play at four times speed"
+                      : "This player has no tempo to change")
+                .simultaneousGesture(DragGesture(minimumDistance: 0)
+                    .onChanged { _ in player.setFastForward(true) }
+                    .onEnded { _ in player.setFastForward(false) })
+            }
+            .controlSize(.regular)
+
+            if player.isFastForwarding {
+                Text("×4")
+                    .font(.system(size: 10))
+                    .foregroundStyle(palette.color(.marked))
+                    .fixedSize()
+            }
+
             Spacer()
+            HStack(spacing: 5) {
+                Image(systemName: "speaker.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(palette.color(.dim))
+                // Written to the settings when the drag ends rather than on
+                // every step of it, which would re-encode the whole store a
+                // hundred times over one sweep of the slider.
+                Slider(value: $player.volume, in: 0...1) { editing in
+                    if !editing { settings.sidVolume = player.volume }
+                }
+                .frame(width: 80)
+            }
+            .help("Volume. Fast forward plays at half of it.")
+
             if let error = player.errorMessage {
                 Text(error)
                     .font(.system(size: 10))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(palette.color(.marked))
                     .lineLimit(1)
             }
             Button("Close", action: onClose)

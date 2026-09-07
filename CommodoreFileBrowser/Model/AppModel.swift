@@ -154,6 +154,7 @@ final class AppModel: ObservableObject {
             return true
         }
         if case .player = sheet { return handlePlayerKey(event) }
+        if case .module = sheet { return handleModuleKey(event) }
         guard sheet == nil else { return false }
         let shift = event.modifierFlags.contains(.shift)
         let command = event.modifierFlags.contains(.command)
@@ -277,7 +278,7 @@ final class AppModel: ObservableObject {
             statusMessage = "\(module.format.name) module - no player for this format yet"
             return
         }
-        moduleRequest = ModuleRequest(name: name, module: module)
+        moduleRequest = ModuleRequest(name: name, module: module, destination: exportDirectory)
         sheet = .module
     }
 
@@ -341,6 +342,32 @@ final class AppModel: ObservableObject {
         }
         guard let url = item.url else { return [] }
         return HostOpener.applications(for: url)
+    }
+
+    /// The same for the tracker sheet: up and down step through the files,
+    /// left and right through the songs inside the module.
+    ///
+    /// Stepping goes through `playNeighbour` like the SID sheet's, so walking a
+    /// directory of mixed files moves between the two players by itself — the
+    /// next file decides which sheet it opens.
+    private func handleModuleKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command) else { return false }
+        switch Int(event.keyCode) {
+        case 126: playNeighbour(-1)                     // up
+        case 125: playNeighbour(1)                      // down
+        case 123: adjustSubsong(-1)                     // left
+        case 124: adjustSubsong(1)                      // right
+        default: return false
+        }
+        return true
+    }
+
+    /// Step to the previous or next song inside the module, which restarts it.
+    private func adjustSubsong(_ delta: Int) {
+        guard modulePlayer.subsongs > 1 else { return }
+        let next = modulePlayer.currentSubsong + delta
+        guard next >= 0, next < modulePlayer.subsongs else { return }
+        modulePlayer.selectSubsong(next)
     }
 
     /// Step to the neighbouring playable file and play it, so a disk of tunes

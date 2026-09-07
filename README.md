@@ -424,6 +424,21 @@ no clock. The stereo control is there because Amiga modules pan the voices hard
 left and right, which is how they were meant to sound on speakers and tiring on
 headphones.
 
+Otherwise it is the SID sheet: the same three transport keys, the same volume,
+the same oscilloscope with a video export under it, and `⌘↑` / `⌘↓` to play the
+previous or next file — which crosses between the two players by itself, since
+the file being stepped to is what decides which sheet opens. `⌘←` / `⌘→` step
+the songs inside a module, as they step a SID tune's subtunes.
+
+Two things differ, both because of what is underneath. The oscilloscope draws
+the output — mixed, or left over right — rather than a trace per voice: there
+is nothing else to draw, since libopenmpt reports a level per channel but not
+the samples behind it, and a chiptune player reports nothing at all. And fast
+forward runs at four times rather than the SID player's ten, because four is
+where libopenmpt's tempo factor stops — it throws above that rather than
+clamping, so asking for ten applies nothing at all. A chiptune player has no
+tempo to change, so its key is disabled rather than pretending.
+
 ## Themes
 
 *Settings › Appearance* has Light / Dark / System, four presets (Standard,

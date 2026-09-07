@@ -1,2 +1,3 @@
-// Exposes the vendored SID engine to Swift.
+// Exposes the vendored audio engines to Swift.
 #import "Audio/csid.h"
+#import "Audio/cmod.h"

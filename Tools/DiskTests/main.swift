@@ -1725,5 +1725,99 @@ do {
     print("  FAIL modules: \(error)"); failures += 1
 }
 
+// --- The module engine actually runs ----------------------------------------
+print("\n=== module engine")
+do {
+    /// Open a file through the shim and render it a second at a time, counting
+    /// the samples that carry signal. Some modules open on a few seconds of
+    /// silence before the first note — one S3M here waits three — so this looks
+    /// across `seconds` rather than judging the first buffer.
+    func play(_ bytes: [UInt8], seconds: Int = 2) -> (opened: Bool, type: String, title: String,
+                                                      channels: Int, loud: Int, seconds: Double) {
+        let opened = bytes.withUnsafeBufferPointer {
+            cmod_open($0.baseAddress, Int32($0.count), 44100)
+        } == 1
+        guard opened else { cmod_close(); return (false, "", "", 0, 0, 0) }
+        let type = String(cString: cmod_type())
+        let title = String(cString: cmod_title())
+        let channels = Int(cmod_channels())
+        let duration = cmod_duration()
+
+        var loud = 0
+        var buffer = [Int16](repeating: 0, count: 44100 * 2)    // one second, interleaved
+        for _ in 0..<seconds {
+            var rendered = 0
+            buffer.withUnsafeMutableBufferPointer { rendered = Int(cmod_render($0.baseAddress, 44100)) }
+            if rendered == 0 { break }
+            loud += buffer.prefix(rendered * 2).filter { $0 != 0 }.count
+        }
+        cmod_close()
+        return (true, type, title, channels, loud, duration)
+    }
+
+    func read(_ path: String) -> [UInt8]? {
+        guard let d = FileManager.default.contents(atPath: path) else { return nil }
+        return [UInt8](d)
+    }
+
+    let music = "/Users/macc/Emulation/Amiga/Music"
+
+    // One of each of the four kinds the collection holds.
+    let cases: [(String, String, Int)] = [
+        ("\(music)/MACMUSICS/mod.macos", "mod", 4),
+        ("\(music)/MACMUSICS/med.macos++", "med", 8),
+        ("\(music)/XM/AGONY.XM", "xm", 12),
+        ("\(music)/S3M/\((try? FileManager.default.contentsOfDirectory(atPath: "\(music)/S3M"))?.sorted().first(where: { $0.lowercased().hasSuffix(".s3m") }) ?? "")", "s3m", 0),
+    ]
+    for (path, wantType, wantChannels) in cases {
+        guard let bytes = read(path) else { check(false, "\((path as NSString).lastPathComponent) not readable"); continue }
+        let r = play(bytes)
+        let name = (path as NSString).lastPathComponent
+        check(r.opened, "\(name) opened as \(r.type)")
+        check(r.type == wantType, "  reported type \"\(r.type)\"")
+        if wantChannels > 0 { check(r.channels == wantChannels, "  \(r.channels) channels") }
+        check(r.loud > 100_000, "  2s render is audible: \(r.loud)/176400 non-silent samples")
+        check(r.seconds > 1, String(format: "  runs %.0f seconds", r.seconds))
+    }
+
+    // A title comes out of the file even when the name says nothing.
+    if let bytes = read("\(music)/MACMUSICS/mod.macos") {
+        check(play(bytes).title == "macos", "the module names itself")
+    }
+
+    // Everything the browser calls a module, the engine must be able to open —
+    // otherwise Return offers to play something that then does not.
+    var recognised = 0, played = 0, mute: [String] = [], refused: [String] = []
+    if let walk = FileManager.default.enumerator(atPath: music) {
+        for case let rel as String in walk {
+            if rel.hasPrefix("SAMPLES") || (rel as NSString).lastPathComponent.hasPrefix(".") { continue }
+            let path = "\(music)/\(rel)"
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue,
+                  let bytes = read(path), ModuleLoader.detect(bytes) != nil else { continue }
+            recognised += 1
+            let r = play(bytes, seconds: 8)
+            if !r.opened { refused.append(rel) } else if r.loud < 1000 { mute.append(rel) } else { played += 1 }
+        }
+    }
+    check(recognised >= 150, "\(recognised) modules recognised in the collection")
+    check(refused.isEmpty, "the engine opened every one\(refused.isEmpty ? "" : ", except \(refused.prefix(3))")")
+    check(mute.isEmpty, "and every one made a sound\(mute.isEmpty ? "" : "; silent: \(mute.prefix(3))")")
+    check(played == recognised, "\(played) of \(recognised) played")
+
+    // Nothing open is not a crash: renders come back silent.
+    cmod_close()
+    var empty = [Int16](repeating: 0x7FFF, count: 512)
+    empty.withUnsafeMutableBufferPointer { _ = cmod_render($0.baseAddress, 256) }
+    check(empty.allSatisfy { $0 == 0 }, "rendering with nothing open gives silence")
+    check(cmod_channels() == 0 && String(cString: cmod_type()).isEmpty, "and the readers answer with nothing")
+
+    // Rubbish is refused rather than played.
+    let rubbish = [UInt8]("this is not a module, it is a sentence".utf8) + [UInt8](repeating: 0x41, count: 4000)
+    check(!play(rubbish).opened, "a file of text is refused")
+} catch {
+    print("  FAIL module engine: \(error)"); failures += 1
+}
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) CHECK(S) FAILED")
 exit(failures == 0 ? 0 : 1)

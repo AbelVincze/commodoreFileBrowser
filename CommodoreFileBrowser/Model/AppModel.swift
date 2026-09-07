@@ -274,11 +274,15 @@ final class AppModel: ObservableObject {
     /// line is better than a sheet that cannot start, and matches what Return
     /// does when a file is not a tune at all.
     private func beginModulePlay(_ module: Module, named name: String) {
-        guard modulePlayer.load(module) else {
+        // The request is made first so the engine can be told which sheet the
+        // module belongs to. That is what lets the sheet being taken down tell
+        // itself apart from the one arriving when files are stepped through.
+        let request = ModuleRequest(name: name, module: module, destination: exportDirectory)
+        guard modulePlayer.load(module, owner: request.id) else {
             statusMessage = "\(module.format.name) module - no player for this format yet"
             return
         }
-        moduleRequest = ModuleRequest(name: name, module: module, destination: exportDirectory)
+        moduleRequest = request
         sheet = .module
     }
 

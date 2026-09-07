@@ -47,6 +47,16 @@ final class ModulePlayer: ObservableObject {
     @Published private(set) var module: Module?
     @Published private(set) var engine_: Engine = .openMPT
     @Published private(set) var isFastForwarding = false
+    /// Which request the module in the engine was loaded for.
+    ///
+    /// Stepping to the next file loads the new module and then swaps the
+    /// sheet, so for a moment two sheets exist: the one going away and the one
+    /// arriving. SwiftUI does not promise which of their onAppear and
+    /// onDisappear runs first, and the one going away would otherwise unload
+    /// the module that had just been put in — which is exactly what left the
+    /// next file loaded but silent. A sheet only tears the player down if what
+    /// is loaded is still its own.
+    @Published private(set) var owner: UUID?
     /// A tune whose pattern rate cannot be changed cannot be fast forwarded.
     var canFastForward: Bool { engine_ == .openMPT && cmod_can_set_tempo() == 1 }
     /// Whether the position and the length are known. c-flod reports neither.
@@ -78,11 +88,15 @@ final class ModulePlayer: ObservableObject {
     @Published var repeats = false {
         didSet { apply { if engine_ == .openMPT { cmod_set_repeat(repeats ? 1 : 0) } } }
     }
-    /// 100 is the stereo the file asks for, 0 is mono. Amiga modules pan hard
-    /// left and right by design, which is tiring on headphones.
-    @Published var stereoSeparation: Double = 100 {
-        didSet { apply { if engine_ == .openMPT { cmod_set_stereo_separation(Int32(stereoSeparation)) } } }
+    /// On is the stereo the file asks for; off mixes every channel to both
+    /// sides. Amiga modules pan hard left and right by design, which is how
+    /// they were meant to sound on speakers and tiring on headphones — and
+    /// that is the whole of the choice, so it is a switch rather than a
+    /// percentage nobody wants to pick a number from.
+    @Published var stereo = true {
+        didSet { apply { if engine_ == .openMPT { cmod_set_stereo_separation(separation) } } }
     }
+    private var separation: Int32 { stereo ? 100 : 0 }
     @Published var errorMessage: String?
 
     private let engine = AVAudioEngine()
@@ -155,8 +169,9 @@ final class ModulePlayer: ObservableObject {
     /// it, which is how a format the browser can name but not play is found
     /// out — the caller says so rather than opening a player that cannot start.
     @discardableResult
-    func load(_ module: Module) -> Bool {
+    func load(_ module: Module, owner: UUID? = nil) -> Bool {
         pause()
+        self.owner = owner
         cmod_close()
         cflod_close()
 
@@ -181,7 +196,7 @@ final class ModulePlayer: ObservableObject {
             position = 0
             ended.pointee = false
             cmod_set_repeat(repeats ? 1 : 0)
-            cmod_set_stereo_separation(Int32(stereoSeparation))
+            cmod_set_stereo_separation(separation)
             return true
         }
 
@@ -193,6 +208,7 @@ final class ModulePlayer: ObservableObject {
         } == 1
         guard byCflod else {
             self.module = nil
+            self.owner = nil
             clearDetails()
             return false
         }
@@ -257,6 +273,7 @@ final class ModulePlayer: ObservableObject {
         pause()
         apply { cmod_close(); cflod_close() }
         module = nil
+        owner = nil
         clearDetails()
     }
 

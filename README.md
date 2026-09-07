@@ -420,9 +420,10 @@ non-commercial licence, unlike everything else here.
 A transport rather than a form: a module carries its whole song, so there is
 nothing to type in and it opens playing. Position, length and seeking come from
 libopenmpt; a chiptune player routine reports none of them, so that sheet shows
-no clock. The stereo control is there because Amiga modules pan the voices hard
-left and right, which is how they were meant to sound on speakers and tiring on
-headphones.
+no clock. The *Stereo* switch is there because Amiga modules pan the voices
+hard left and right, which is how they were meant to sound on speakers and
+tiring on headphones; turned off, every channel is mixed to both sides. It is a
+switch rather than a percentage because that is the whole of the choice.
 
 Otherwise it is the SID sheet: the same three transport keys, the same volume,
 the same oscilloscope with a video export under it, and `⌘↑` / `⌘↓` to play the

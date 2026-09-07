@@ -82,6 +82,10 @@ struct ModulePlayerSheet: View {
         .onAppear {
             player.setScope(enabled: showScope)
             player.volume = settings.sidVolume
+            // Normally the module was loaded on the way here, so this is only
+            // for the case where it was not — the sheet is what plays it, and
+            // it should not depend on somebody else having got there first.
+            if player.owner != request.id { _ = player.load(request.module, owner: request.id) }
             // Everything needed is already known, so start straight away.
             player.play()
         }
@@ -92,7 +96,15 @@ struct ModulePlayerSheet: View {
         .onChange(of: scopeMode) { _, mode in settings.moduleScopeMode = mode.rawValue }
         .onChange(of: exportResolution) { _, value in settings.exportResolution = value.rawValue }
         .onChange(of: exportAspect) { _, value in settings.exportAspect = value.rawValue }
-        .onDisappear { player.setScope(enabled: false); player.unload() }
+        .onDisappear {
+            // Only if this sheet's module is still the one in the engine. When
+            // the next file is stepped to, its module is loaded before this
+            // sheet goes away, and unloading here would take it straight back
+            // out again.
+            guard player.owner == request.id else { return }
+            player.setScope(enabled: false)
+            player.unload()
+        }
     }
 
     // MARK: - Header
@@ -198,15 +210,9 @@ struct ModulePlayerSheet: View {
             // Amiga modules pan the voices hard left and right, which is how
             // they were meant to sound on speakers and tiring on headphones.
             if player.engine_ == .openMPT {
-                HStack(spacing: 8) {
-                    Text("Stereo").frame(width: 78, alignment: .leading)
-                        .foregroundStyle(palette.color(.dim))
-                    Slider(value: $player.stereoSeparation, in: 0...100)
-                    Text("\(Int(player.stereoSeparation))%")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(palette.color(.dim))
-                        .frame(width: 34, alignment: .trailing)
-                }
+                Toggle("Stereo", isOn: $player.stereo)
+                    .foregroundStyle(palette.color(.text))
+                    .help("Off mixes every channel to both sides")
 
                 // libopenmpt's to give; a chiptune player routine takes no such
                 // instruction.

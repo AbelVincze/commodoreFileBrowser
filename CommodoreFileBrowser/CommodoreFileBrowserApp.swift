@@ -33,6 +33,11 @@ struct CommodoreFileBrowserApp: App {
 
     @CommandsBuilder
     private var menuCommands: some Commands {
+        // The standard About item, kept in its usual place, but pointed at our
+        // own panel so it carries a description and the credit line.
+        CommandGroup(replacing: .appInfo) {
+            Button("About Commodore File Browser") { AboutPanel.show() }
+        }
         CommandGroup(replacing: .newItem) {
             Button("New Disk Image…") { model.beginNewImage() }
             Button("New Folder…") { model.beginMakeFolder() }

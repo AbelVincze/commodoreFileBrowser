@@ -195,6 +195,9 @@
 					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt",
 					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt/common",
 					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt/src",
+					"$(SRCROOT)/CommodoreFileBrowser/Audio/cflod",
+					"$(SRCROOT)/CommodoreFileBrowser/Audio/cflod/flashlib",
+					"$(SRCROOT)/CommodoreFileBrowser/Audio",
 				);
 				INFOPLIST_KEY_CFBundleDisplayName = "Commodore File Browser";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
@@ -204,7 +207,14 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				OTHER_CFLAGS = "-Wno-logical-not-parentheses";
+				OTHER_CFLAGS = (
+					"-Wno-logical-not-parentheses",
+					"-Wno-incompatible-function-pointer-types",
+					"-Wno-int-conversion",
+					"-Wno-implicit-function-declaration",
+					"-Wno-incompatible-pointer-types",
+					"-Wno-return-type",
+				);
 				OTHER_CPLUSPLUSFLAGS = "-w";
 				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -234,6 +244,9 @@
 					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt",
 					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt/common",
 					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt/src",
+					"$(SRCROOT)/CommodoreFileBrowser/Audio/cflod",
+					"$(SRCROOT)/CommodoreFileBrowser/Audio/cflod/flashlib",
+					"$(SRCROOT)/CommodoreFileBrowser/Audio",
 				);
 				INFOPLIST_KEY_CFBundleDisplayName = "Commodore File Browser";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
@@ -243,7 +256,14 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				OTHER_CFLAGS = "-Wno-logical-not-parentheses";
+				OTHER_CFLAGS = (
+					"-Wno-logical-not-parentheses",
+					"-Wno-incompatible-function-pointer-types",
+					"-Wno-int-conversion",
+					"-Wno-implicit-function-declaration",
+					"-Wno-incompatible-pointer-types",
+					"-Wno-return-type",
+				);
 				OTHER_CPLUSPLUSFLAGS = "-w";
 				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser;
 				PRODUCT_NAME = "$(TARGET_NAME)";

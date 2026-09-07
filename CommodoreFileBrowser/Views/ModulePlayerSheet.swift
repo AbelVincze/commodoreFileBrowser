@@ -31,8 +31,10 @@ struct ModulePlayerSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().overlay(palette.color(.border))
-            progress
-            Divider().overlay(palette.color(.border))
+            if player.isSeekable {
+                progress
+                Divider().overlay(palette.color(.border))
+            }
             controls
             Divider().overlay(palette.color(.border))
             transport
@@ -155,18 +157,24 @@ struct ModulePlayerSheet: View {
 
             // Amiga modules pan the voices hard left and right, which is how
             // they were meant to sound on speakers and tiring on headphones.
-            HStack(spacing: 8) {
-                Text("Stereo").frame(width: 78, alignment: .leading)
-                    .foregroundStyle(palette.color(.dim))
-                Slider(value: $player.stereoSeparation, in: 0...100)
-                Text("\(Int(player.stereoSeparation))%")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(palette.color(.dim))
-                    .frame(width: 34, alignment: .trailing)
+            if player.engine_ == .openMPT {
+                HStack(spacing: 8) {
+                    Text("Stereo").frame(width: 78, alignment: .leading)
+                        .foregroundStyle(palette.color(.dim))
+                    Slider(value: $player.stereoSeparation, in: 0...100)
+                    Text("\(Int(player.stereoSeparation))%")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(palette.color(.dim))
+                        .frame(width: 34, alignment: .trailing)
+                }
             }
 
-            Toggle("Repeat", isOn: $player.repeats)
-                .foregroundStyle(palette.color(.text))
+            // Both of these are libopenmpt's to give; a chiptune player routine
+            // takes no such instruction.
+            if player.engine_ == .openMPT {
+                Toggle("Repeat", isOn: $player.repeats)
+                    .foregroundStyle(palette.color(.text))
+            }
         }
         .font(.system(size: 11))
         .padding(.horizontal, 14)

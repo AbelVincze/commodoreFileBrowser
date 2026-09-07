@@ -1,18 +1,31 @@
 import Foundation
 import AVFoundation
 
-/// Drives the vendored libopenmpt engine from an audio render callback.
+/// Drives the vendored module engines from an audio render callback.
 ///
-/// Shaped like `SIDPlayer` next door, and for the same reason: the engine is
-/// one global machine, so loading a module replaces whatever was playing. What
+/// Shaped like `SIDPlayer` next door, and for the same reason: the engines are
+/// global machines, so loading a module replaces whatever was playing. What
 /// differs is that a module is stereo, knows how long it runs and can be seeked
 /// — a tracker file carries its whole song rather than a routine to call.
+///
+/// There are two engines behind this. libopenmpt is asked first and plays the
+/// tracker formats; c-flod is asked second and plays the Amiga chiptune
+/// formats, where the file is a player routine with its data rather than a
+/// pattern table. Which one has it changes what can be said about the module:
+/// c-flod knows neither how long a tune runs nor where it has got to, so the
+/// sheet shows no clock for those and cannot seek them.
 final class ModulePlayer: ObservableObject {
 
     static let sampleRate = 44100.0
 
+    /// Which engine has the module.
+    enum Engine { case openMPT, cflod }
+
     @Published private(set) var isPlaying = false
     @Published private(set) var module: Module?
+    @Published private(set) var engine_: Engine = .openMPT
+    /// Whether the position and the length are known. c-flod reports neither.
+    var isSeekable: Bool { engine_ == .openMPT && duration > 0 }
 
     /// What the engine made of the file once it was open: these come from
     /// inside it, and are what the sheet shows.
@@ -33,11 +46,14 @@ final class ModulePlayer: ObservableObject {
     /// Output level, 0 to 1.
     @Published var volume: Double = 1 { didSet { applyGain() } }
     /// Start again at the end rather than stopping.
-    @Published var repeats = false { didSet { apply { cmod_set_repeat(repeats ? 1 : 0) } } }
+    /// Only libopenmpt can be told this; a c-flod tune stops when it stops.
+    @Published var repeats = false {
+        didSet { apply { if engine_ == .openMPT { cmod_set_repeat(repeats ? 1 : 0) } } }
+    }
     /// 100 is the stereo the file asks for, 0 is mono. Amiga modules pan hard
     /// left and right by design, which is tiring on headphones.
     @Published var stereoSeparation: Double = 100 {
-        didSet { apply { cmod_set_stereo_separation(Int32(stereoSeparation)) } }
+        didSet { apply { if engine_ == .openMPT { cmod_set_stereo_separation(Int32(stereoSeparation)) } } }
     }
     @Published var errorMessage: String?
 
@@ -54,6 +70,9 @@ final class ModulePlayer: ObservableObject {
     private let scratch: UnsafeMutablePointer<Int16>
     /// Set by the render block when the module runs out, read by the ticker.
     private let ended: UnsafeMutablePointer<Bool>
+    /// Read by the render block to pick an engine, so it never touches Swift
+    /// state from the audio thread.
+    private let onCflod: UnsafeMutablePointer<Bool>
     private let targetGain: UnsafeMutablePointer<Float>
     private let currentGain: UnsafeMutablePointer<Float>
 
@@ -64,6 +83,8 @@ final class ModulePlayer: ObservableObject {
         scratch.initialize(repeating: 0, count: scratchFrames * 2)
         ended = .allocate(capacity: 1)
         ended.initialize(to: false)
+        onCflod = .allocate(capacity: 1)
+        onCflod.initialize(to: false)
         targetGain = .allocate(capacity: 1)
         targetGain.initialize(to: 1)
         currentGain = .allocate(capacity: 1)
@@ -75,6 +96,7 @@ final class ModulePlayer: ObservableObject {
         engine.stop()
         scratch.deallocate()
         ended.deallocate()
+        onCflod.deallocate()
         targetGain.deallocate()
         currentGain.deallocate()
         lock.deallocate()
@@ -88,27 +110,56 @@ final class ModulePlayer: ObservableObject {
     @discardableResult
     func load(_ module: Module) -> Bool {
         pause()
-        let opened = module.data.withUnsafeBufferPointer {
+        cmod_close()
+        cflod_close()
+
+        // libopenmpt first: it plays the tracker formats, and it is the one
+        // that can say how long a module runs.
+        let byOpenMPT = module.data.withUnsafeBufferPointer {
             cmod_open($0.baseAddress, Int32($0.count), Int32(Self.sampleRate))
         } == 1
-        guard opened else {
+        if byOpenMPT {
+            engine_ = .openMPT
+            onCflod.pointee = false
+            self.module = module
+            type = String(cString: cmod_type())
+            tracker = String(cString: cmod_tracker())
+            innerTitle = String(cString: cmod_title())
+            channels = Int(cmod_channels())
+            instruments = Int(cmod_instruments())
+            samples = Int(cmod_samples())
+            duration = cmod_duration()
+            subsongs = Int(cmod_subsong_count())
+            position = 0
+            ended.pointee = false
+            cmod_set_repeat(repeats ? 1 : 0)
+            cmod_set_stereo_separation(Int32(stereoSeparation))
+            return true
+        }
+
+        // Then c-flod, for the Amiga chiptune players. It answers far fewer
+        // questions about what it opened: a player routine does not carry a
+        // title, a length, or a count of anything.
+        let byCflod = module.data.withUnsafeBufferPointer {
+            cflod_open($0.baseAddress, Int32($0.count))
+        } == 1
+        guard byCflod else {
             self.module = nil
             clearDetails()
             return false
         }
+        engine_ = .cflod
+        onCflod.pointee = true
         self.module = module
-        type = String(cString: cmod_type())
-        tracker = String(cString: cmod_tracker())
-        innerTitle = String(cString: cmod_title())
-        channels = Int(cmod_channels())
-        instruments = Int(cmod_instruments())
-        samples = Int(cmod_samples())
-        duration = cmod_duration()
-        subsongs = Int(cmod_subsong_count())
+        type = ""
+        tracker = String(cString: cflod_player_name())
+        innerTitle = ""
+        channels = 4                    // the Amiga's four voices
+        instruments = 0; samples = 0
+        duration = 0                    // unknown, so the sheet shows no clock
+        subsongs = Int(cflod_subsong_count())
         position = 0
         ended.pointee = false
-        cmod_set_repeat(repeats ? 1 : 0)
-        cmod_set_stereo_separation(Int32(stereoSeparation))
         return true
     }
 
@@ -138,10 +189,14 @@ final class ModulePlayer: ObservableObject {
         isPlaying = false
     }
 
-    /// Silence and rewind to the top.
+    /// Silence and rewind to the top. c-flod cannot seek, so starting it again
+    /// means running the player's own init — the same thing selecting a song
+    /// does.
     func stop() {
         pause()
-        apply { cmod_seek(0) }
+        apply {
+            if engine_ == .openMPT { cmod_seek(0) } else { cflod_set_subsong(0) }
+        }
         position = 0
         ended.pointee = false
     }
@@ -150,7 +205,7 @@ final class ModulePlayer: ObservableObject {
     /// when the sheet closes.
     func unload() {
         pause()
-        apply { cmod_close() }
+        apply { cmod_close(); cflod_close() }
         module = nil
         clearDetails()
     }
@@ -158,6 +213,7 @@ final class ModulePlayer: ObservableObject {
     func toggle() { isPlaying ? pause() : play() }
 
     func seek(to seconds: Double) {
+        guard engine_ == .openMPT else { return }
         apply { cmod_seek(max(0, min(seconds, duration))) }
         position = cmod_position()
         ended.pointee = false
@@ -168,17 +224,23 @@ final class ModulePlayer: ObservableObject {
     func selectSubsong(_ index: Int) {
         guard index >= 0, index < subsongs else { return }
         apply {
-            cmod_set_subsong(Int32(index))
-            cmod_seek(0)
+            if engine_ == .openMPT {
+                cmod_set_subsong(Int32(index))
+                cmod_seek(0)
+            } else {
+                cflod_set_subsong(Int32(index))
+            }
         }
-        duration = cmod_duration()
+        duration = engine_ == .openMPT ? cmod_duration() : 0
         position = 0
         ended.pointee = false
     }
 
     /// Voice levels for the oscilloscope, as of the last buffer rendered.
+    /// c-flod keeps none, so those modules have nothing to show.
     func voiceLevels() -> [Double] {
-        (0..<Int(cmod_voice_count())).map { cmod_voice_level(Int32($0)) }
+        guard engine_ == .openMPT else { return [] }
+        return (0..<Int(cmod_voice_count())).map { cmod_voice_level(Int32($0)) }
     }
 
     // MARK: - Plumbing
@@ -204,7 +266,9 @@ final class ModulePlayer: ObservableObject {
         ticker?.invalidate()
         ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.position = cmod_position()
+            // c-flod does not report a position, so the clock stays at zero and
+            // only the end-of-tune check matters there.
+            if self.engine_ == .openMPT { self.position = cmod_position() }
             if self.ended.pointee { self.stop() }
         }
     }
@@ -217,6 +281,7 @@ final class ModulePlayer: ObservableObject {
         let scratch = self.scratch
         let capacity = self.scratchFrames
         let finished = self.ended
+        let cflod = self.onCflod
         let wanted = self.targetGain
         let reached = self.currentGain
 
@@ -237,7 +302,8 @@ final class ModulePlayer: ObservableObject {
             var done = 0
             while done < frames {
                 let chunk = min(capacity, frames - done)
-                let got = Int(cmod_render(scratch, Int32(chunk)))
+                let got = Int(cflod.pointee ? cflod_render(scratch, Int32(chunk))
+                                            : cmod_render(scratch, Int32(chunk)))
                 if got < chunk { finished.pointee = true }
                 // libopenmpt gives interleaved stereo; the node wants a plane
                 // per channel.

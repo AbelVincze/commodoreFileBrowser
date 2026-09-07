@@ -332,6 +332,58 @@ for the load address, the init and play routines, the A/X/Y byte and an
 explicit playback rate, and a per-voice tap for the oscilloscope. Licensed
 "do what you want, but please mention me as its original author".
 
+## Playing tracker modules
+
+`Return` plays a module too, and finds one without help from its name.
+
+Amiga modules are not named the way Mac files are. The convention there is a
+prefix — `mod.crockets`, `med.jazz` — and plenty of files carry nothing at all:
+of the 47 modules inside the ADF and DMS images here, five are called `KONMOD`,
+`LPMOD`, `LSMmiuzik`, `MUSC` and `oliNBP`. So the bytes decide, not the name.
+
+Every format worth playing announces itself: the four characters at offset 1080
+for the 31-sample Amiga module, a mark at the front for the trackers and the
+chiptune editors. A mark on its own is not enough, though — the ProTracker
+playroutine source carries a line reading `EQU 1080 ;"M.K." :)`, a comment
+naming the offset of the mark, which in that file lands *at* offset 1080. What
+settles it is arithmetic: a module says how long each of its 31 samples is and
+which patterns it plays, and header, patterns and samples account for the file
+exactly, once a pattern is sized by the channel count its mark spells out.
+
+### Two engines
+
+* **libopenmpt** plays the tracker formats — MOD, XM, S3M, IT, MED, DigiBooster,
+  Oktalyzer, MultiTracker. BSD licensed, and vendored into the tree the way the
+  SID engine is, so there is no library to find at run time.
+* **c-flod** plays the Amiga chiptune formats, where the file is a player
+  routine with its data behind it rather than a pattern table: Future Composer,
+  SoundMon, Hippel, SidMon, Whittaker, Hubbard, Fred, Delta Music, Digital
+  Mugician, SoundFX. Those have no signature to look for, so recognising one
+  means letting each player read the file and seeing which validates it.
+  **Licensed CC BY-NC-SA 3.0**, which is not the licence the rest of this
+  carries — see `Audio/cflod/LICENSE.txt`.
+
+A format the browser can name but neither engine plays says so in the status
+line rather than opening a player that cannot start, the same way `Return` does
+when a file is not a tune at all.
+
+Two changes were needed to c-flod. It traps into the debugger when a file will
+not fit its fixed-size buffers, which in an application means the process dies;
+those checks guard writes into the buffers, so they cannot be compiled out.
+Instead there is a landing point in the shim that they jump back to, and the
+load fails rather than the app. It also assumed an x86 debug instruction, and
+allowed a module only 286 KB of sample memory where the machines these came
+from had two megabytes.
+
+### The sheet
+
+A transport rather than a form: a module carries its whole song, so there is
+nothing to type in and it opens playing. Position, length and seeking come from
+libopenmpt; a chiptune player routine reports none of them, so that sheet shows
+no clock. The stereo control is there because Amiga modules pan the voices hard
+left and right, which is how they were meant to sound on speakers and tiring on
+headphones.
+
 ## Themes
 
 *Settings › Appearance* has Light / Dark / System, four presets (Standard,

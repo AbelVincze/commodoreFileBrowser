@@ -1815,6 +1815,98 @@ do {
     // Rubbish is refused rather than played.
     let rubbish = [UInt8]("this is not a module, it is a sentence".utf8) + [UInt8](repeating: 0x41, count: 4000)
     check(!play(rubbish).opened, "a file of text is refused")
+
+    // --- The Amiga chiptune players, which libopenmpt has no reader for ---
+    //
+    // These formats carry no magic bytes: the file is a player routine with its
+    // data behind it. The only test is to let each player read it and see which
+    // one validates it, so what matters here is that the guessing is safe.
+    func cflod(_ bytes: [UInt8], seconds: Int = 4) -> (opened: Bool, player: String,
+                                                       loud: Int, gaveUp: Bool) {
+        let opened = bytes.withUnsafeBufferPointer {
+            cflod_open($0.baseAddress, Int32($0.count))
+        } == 1
+        guard opened else { cflod_close(); return (false, "", 0, false) }
+        let who = String(cString: cflod_player_name())
+        var loud = 0
+        var buffer = [Int16](repeating: 0, count: 44100 * 2)
+        for _ in 0..<seconds {
+            var rendered = 0
+            buffer.withUnsafeMutableBufferPointer { rendered = Int(cflod_render($0.baseAddress, 44100)) }
+            if rendered == 0 { break }
+            loud += buffer.prefix(rendered * 2).filter { $0 != 0 }.count
+        }
+        let gaveUp = cflod_gave_up() != 0
+        cflod_close()
+        return (true, who, loud, gaveUp)
+    }
+
+    // The one module in the user's disk images libopenmpt will not open. It is
+    // called MUSC, which is exactly the case content detection exists for.
+    let alienBreed = "/Users/macc/Emulation/Amiga/harddisks/dh2/!DMS/AlienBreedSE-2.DMS"
+    if let img = try? ADFImage(unpacking: URL(fileURLWithPath: alienBreed)) {
+        var found = false
+        func hunt(_ path: [String], _ depth: Int) {
+            guard depth < 6, !found, let entries = try? img.entries(at: path) else { return }
+            for entry in entries where !found {
+                if entry.isDirectory { hunt(path + [entry.displayName], depth + 1); continue }
+                guard let data = try? img.read(entry, at: path) else { continue }
+                let bytes = [UInt8](data)
+                guard let module = ModuleLoader.detect(bytes),
+                      case .soundMon = module.format else { continue }
+                found = true
+                check(entry.displayName == "MUSC", "found \(entry.displayName), named nothing like a module")
+                check(!play(bytes).opened, "libopenmpt has no reader for it")
+                let r = cflod(bytes)
+                check(r.opened, "c-flod claims it as \(r.player)")
+                check(r.player == "BP SoundMon", "  which is the format the bytes said")
+                check(r.loud > 100_000, "  and it plays: \(r.loud)/352800 non-silent samples")
+                check(!r.gaveUp, "  without hitting a bounds check")
+            }
+        }
+        hunt([], 0)
+        check(found, "the SoundMon module was found in AlienBreedSE-2.DMS")
+    } else { check(false, "AlienBreedSE-2.DMS did not open") }
+
+    // Nothing that is not music may be claimed. c-flod guesses by trying every
+    // player, and the loosest of them scans for 68000 code patterns, so this is
+    // the check that keeps Return from offering to play an icon or a library.
+    var tried = 0, claimed: [String] = []
+    let kinds = ["info", "library", "font", "iff", "device", "datatype", "guide", "c", "s"]
+    if let walk = FileManager.default.enumerator(atPath: "/Users/macc/Emulation/Amiga") {
+        for case let rel as String in walk {
+            guard kinds.contains((rel as NSString).pathExtension.lowercased()),
+                  !rel.hasPrefix("Music/"),
+                  let data = FileManager.default.contents(atPath: "/Users/macc/Emulation/Amiga/\(rel)"),
+                  data.count > 2048 else { continue }
+            tried += 1
+            if tried > 400 { break }
+            let r = cflod([UInt8](data), seconds: 0)
+            if r.opened { claimed.append("\(rel) -> \(r.player)") }
+        }
+    }
+    check(tried > 300, "\(tried) non-music Amiga files tried against every chiptune player")
+    check(claimed.isEmpty, "none was claimed\(claimed.isEmpty ? "" : ": \(claimed.prefix(3))")")
+
+    // And the tracker modules stay with libopenmpt rather than being grabbed.
+    if let mod = FileManager.default.contents(atPath: "\(music)/MACMUSICS/mod.macos") {
+        check(!cflod([UInt8](mod), seconds: 0).opened, "a ProTracker module is left to libopenmpt")
+    }
+
+    // A bounds check inside c-flod must fail the load, not the process. Feeding
+    // it truncated rubbish is the cheapest way to prove the app survives.
+    var survived = 0
+    for seed in 0..<64 {
+        var noise = [UInt8](repeating: 0, count: 8192)
+        var value = UInt32(truncatingIfNeeded: seed &* 2654435761 &+ 1)
+        for i in 0..<noise.count {
+            value = value &* 1664525 &+ 1013904223
+            noise[i] = UInt8((value >> 16) & 0xFF)
+        }
+        _ = cflod(noise, seconds: 0)
+        survived += 1
+    }
+    check(survived == 64, "64 files of noise handed to every player, and the process is still here")
 } catch {
     print("  FAIL module engine: \(error)"); failures += 1
 }

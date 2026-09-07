@@ -7,6 +7,10 @@ import AppKit
 /// people expect from the menu. Only the credits block below the version is
 /// ours, and it is an attributed string because the address at the end should
 /// be clickable.
+///
+/// The engine credits are not a courtesy. c-flod is CC BY-NC-SA, whose
+/// attribution term asks for exactly this, and libopenmpt is BSD, which asks
+/// for its notice to travel with the binary.
 enum AboutPanel {
 
     private static let summary = """
@@ -14,6 +18,15 @@ enum AboutPanel {
         folders. Copy files in and out of them, edit a directory, and play the \
         SID tunes and tracker modules you find inside.
         """
+
+    /// Kept short enough to sit on one line at the width the panel gives the
+    /// credits; the last one breaks where it is told to rather than wherever
+    /// it happens to run out of room.
+    private static let engines = [
+        "SID — cSID-light by Hermit (Mihaly Horvath)",
+        "Modules — libopenmpt by the OpenMPT project",
+        "Amiga chiptunes — c-flod by rofl0r,\nafter Flod by Christian Corti",
+    ]
 
     private static let credit = "By Abel Vincze 2026 (C)"
     private static let siteText = "https://iparigrafika.hu/retrocomputing"
@@ -31,18 +44,22 @@ enum AboutPanel {
         centred.lineSpacing = 2
 
         let text = NSMutableAttributedString()
+        func add(_ string: String, size: CGFloat, colour: NSColor) {
+            text.append(NSAttributedString(string: string, attributes: [
+                .font: NSFont.systemFont(ofSize: size),
+                .foregroundColor: colour,
+                .paragraphStyle: centred,
+            ]))
+        }
 
-        text.append(NSAttributedString(string: summary + "\n\n", attributes: [
-            .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: centred,
-        ]))
+        add(summary + "\n\n", size: 11, colour: .labelColor)
 
-        text.append(NSAttributedString(string: credit + "\n", attributes: [
-            .font: NSFont.systemFont(ofSize: 10),
-            .foregroundColor: NSColor.secondaryLabelColor,
-            .paragraphStyle: centred,
-        ]))
+        for engine in engines {
+            add(engine + "\n", size: 10, colour: .secondaryLabelColor)
+        }
+        add("\n", size: 10, colour: .secondaryLabelColor)
+
+        add(credit + "\n", size: 10, colour: .secondaryLabelColor)
 
         // The link carries its own colour and underline: the panel does not
         // style links itself, so without these it reads as plain grey text.

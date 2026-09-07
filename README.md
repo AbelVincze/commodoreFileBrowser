@@ -1,9 +1,9 @@
 # Commodore File Browser
 
-A two-panel file manager for macOS that treats Commodore disk images as folders.
-Copy files from the Mac file system into `.d64` / `.d71` / `.d81` / `.t64`
-images and back out again, with the directory of an image drawn in the original
-Commodore 64 character set.
+A two-panel file manager for macOS that treats retro disk images as folders.
+Copy files between the Mac file system and Commodore or Amiga images, with the
+directory of a Commodore image drawn in the original C64 character set — and
+play the music you find in them.
 
 Built with Xcode, SwiftUI and AppKit. Open `CommodoreFileBrowser.xcodeproj`
 and run, or:
@@ -15,6 +15,49 @@ xcodebuild -project CommodoreFileBrowser.xcodeproj -scheme CommodoreFileBrowser 
 The app lands in `build/Products/Release/`. `SYMROOT` and `OBJROOT` are set in
 the project, so builds go to the project's own `build/` folder rather than to
 derived data, from Xcode and from the command line alike.
+
+## What it does
+
+**Browsing and editing images**
+
+* Commodore disks — 1541, 1571, 1581, the 2040 that came before them, and the
+  8050 / 8250 of the PET drives — plus T64 tape archives and X64 containers.
+* Amiga disks — ADF floppies (OFS and FFS, plain, international or with a
+  directory cache), UAE hardfiles with or without a partition table, and DMS
+  archives, browsed in place or unpacked.
+* Copy, move, rename, delete and make folders in all four directions between
+  the Mac and an image, or between two open images.
+* Editing an image is a transaction: nothing touches the file on disk until the
+  panel leaves, and `Esc` throws the changes away.
+* Format a blank image, edit a disk header, lock entries, rearrange a
+  directory, and insert `DEL` entries to draw rules and boxes in a listing.
+
+**Looking at files**
+
+* A hex viewer that reads the first two bytes as a load address or as data, a
+  lister that detokenises Commodore BASIC in the original font, and a bitmap
+  viewer that draws a file one pixel per bit — presets for a C64 hires screen,
+  a character set, sprites and plain raster order, with the block size
+  adjustable for anything else.
+* Directories rendered from a real character ROM, so PETSCII box-drawing comes
+  out the way a 1541 prints it.
+
+**Playing music**
+
+* SID tunes: PSID and RSID headers, the `Z10 I1000 P1003` file-name convention,
+  and Music Assembler tunes recognised from the player's own code.
+* Tracker modules: MOD, XM, S3M, IT, MED and the rest through libopenmpt, and
+  the Amiga chiptune formats through c-flod — recognised from their bytes, so
+  the Amiga habit of naming a file `mod.something`, or nothing at all, does not
+  matter.
+* An oscilloscope for SID tunes that can be exported as video.
+
+**The Mac side**
+
+* Light, dark and system themes, four palettes and a colour well for each of
+  the thirteen roles the browser draws with.
+* `⌘O` hands a file to whatever app macOS uses for it; a file inside an image
+  is written out as a read-only copy first.
 
 ## How it works
 
@@ -50,18 +93,19 @@ because the names are never converted to ASCII for display.
 | `Tab` | switch panels |
 | `Space` | mark the file under the cursor |
 | `+` `-` `*` | mark all, unmark all, invert |
-| `Return` | enter a folder or an image, or play a file that is a tune |
-| `⇧Return` | play anyway, entering the addresses by hand |
+| `Return` | enter a folder or an image, or play a SID tune or a tracker module |
+| `⇧Return` | force the SID player on, entering the addresses by hand |
 | `⌘O` | open it with the app macOS uses for it |
 | `⌥⌘R` | show it in Finder |
 | right click | open, open with, show in Finder, and the panel's own commands |
 | `→` | enter a folder or an image — never goes up |
 | `←` or `Delete` | go up — saving the image on the way out |
 | `⌘D` | jump to the list of volumes |
+| `⌘U` | re-read both panels from disk |
 | `Esc` | go up **without** saving the image |
 | `⌘S` | save the open image without leaving it |
 | `F1` | help |
-| `F2` | new disk image (D64 at 35/40/42 tracks, D71, D81) |
+| `F2` | new disk image (D64 at 35/40/42 tracks, D67, D71, D81, D80, D82, ADF) |
 | `F3` | view the file under the cursor |
 | `⇧F3` | view it as a bitmap |
 | `F4` | edit the disk header |
@@ -72,6 +116,9 @@ because the names are never converted to ASCII for display.
 | `F8` | delete |
 | `F9` | rename |
 | `F10` | quit |
+| `Space` in a player | play or pause |
+| `⌘↑` `⌘↓` in a player | play the previous or next file |
+| `⌘←` `⌘→` in the SID player | step the song byte, restarting on that song |
 | `Ctrl-Shift` or `⇧⌘C` | switch the Commodore font between upper and lower case |
 | `⇧⌘.` | show hidden files |
 | `⌘↑` `⌘↓` | move an entry within an image directory |
@@ -326,11 +373,7 @@ along it than there are samples in the window: past that the line is a staircase
 of repeated values rather than a finer curve.
 
 The engine is [cSID-light](http://hermit.sidrip.com) by Hermit
-(Mihaly Horvath), vendored into `Audio/csid.c` with SDL and its `main()`
-removed. His CPU and SID emulation is untouched; the additions are a small API
-for the load address, the init and play routines, the A/X/Y byte and an
-explicit playback rate, and a per-voice tap for the oscilloscope. Licensed
-"do what you want, but please mention me as its original author".
+(Mihaly Horvath) — see [Credits](#credits).
 
 ## Playing tracker modules
 
@@ -352,28 +395,25 @@ exactly, once a pattern is sized by the channel count its mark spells out.
 
 ### Two engines
 
-* **libopenmpt** plays the tracker formats — MOD, XM, S3M, IT, MED, DigiBooster,
-  Oktalyzer, MultiTracker. BSD licensed, and vendored into the tree the way the
-  SID engine is, so there is no library to find at run time.
-* **c-flod** plays the Amiga chiptune formats, where the file is a player
-  routine with its data behind it rather than a pattern table: Future Composer,
-  SoundMon, Hippel, SidMon, Whittaker, Hubbard, Fred, Delta Music, Digital
-  Mugician, SoundFX. Those have no signature to look for, so recognising one
-  means letting each player read the file and seeing which validates it.
-  **Licensed CC BY-NC-SA 3.0**, which is not the licence the rest of this
-  carries — see `Audio/cflod/LICENSE.txt`.
+**libopenmpt** is asked first and plays the tracker formats — MOD, XM, S3M, IT,
+MED, DigiBooster, Oktalyzer, MultiTracker. It is also the one that can say how
+long a module runs and seek within it.
+
+**c-flod** is asked second and plays the Amiga chiptune formats, where the file
+is a player routine with its data behind it rather than a pattern table: Future
+Composer, SoundMon, Hippel, SidMon, Whittaker, Hubbard, Fred, Delta Music,
+Digital Mugician, SoundFX. Those carry no signature at all, so recognising one
+means letting each player read the file and seeing which validates it — which
+is only safe because guessing wrong was made survivable. Against 401 icons,
+libraries, fonts, bitmaps and source files, no player claimed one.
 
 A format the browser can name but neither engine plays says so in the status
 line rather than opening a player that cannot start, the same way `Return` does
 when a file is not a tune at all.
 
-Two changes were needed to c-flod. It traps into the debugger when a file will
-not fit its fixed-size buffers, which in an application means the process dies;
-those checks guard writes into the buffers, so they cannot be compiled out.
-Instead there is a landing point in the shim that they jump back to, and the
-load fails rather than the app. It also assumed an x86 debug instruction, and
-allowed a module only 286 KB of sample memory where the machines these came
-from had two megabytes.
+Both engines are vendored rather than linked, and c-flod needed patching to be
+safe to guess with — see [Credits](#credits). Note that c-flod carries a
+non-commercial licence, unlike everything else here.
 
 ### The sheet
 
@@ -443,17 +483,43 @@ swiftc -o /tmp/snap CommodoreFileBrowser/Core/*.swift CommodoreFileBrowser/Disk/
 
 ## Formats
 
-| | |
-|---|---|
-| D64 | 35, 40 and 42 track, with or without error info |
-| D71 | 70 tracks, both BAM halves |
-| D81 | 80 tracks, both BAM sectors |
-| T64 | tape archives; rebuilt on write, with broken end addresses repaired from the next record's offset |
+### Commodore
+
+| | Drive | |
+|---|---|---|
+| D64 | 1541 | 35, 40 and 42 track, with or without error info — 664 blocks free |
+| D67 | 2040 | 35 tracks, DOS 1, one more sector on the second zone — 670 free |
+| D71 | 1571 | 70 tracks, both BAM halves — 1328 free |
+| D81 | 1581 | 80 tracks, both BAM sectors — 3160 free |
+| D80 | 8050 | 77 tracks — 2052 free |
+| D82 | 8250 | 154 tracks — 4133 free |
+| X64 | — | the old VICE container; the 64 byte header is read and the disk inside it is handled as its own type |
+| T64 | — | tape archives; rebuilt on write, with broken end addresses repaired from the next record's offset |
 
 Writing allocates blocks outwards from the directory track with the normal
 interleave, grows the directory by a sector when the current one fills up, and
 keeps the BAM free counts in step. `F2` formats a blank image with the correct
-free block count for its type (664 / 1328 / 3160).
+free block count for its type.
+
+### Amiga
+
+| | |
+|---|---|
+| ADF | 880K and 1.76M floppies — OFS and FFS, plain, international, or with a directory cache |
+| HDF | UAE hardfiles: one bare volume filling the file, or a Rigid Disk Block describing partitions, in which case the root of the image is the partition list |
+| DMS | DiskMasher archives, browsed in place or unpacked to an ADF from the File menu |
+
+Amiga directories are hash tables rather than a list, so the browser walks the
+chains and shows the entries a real AmigaDOS would — including the ones a
+naive reader misses when two names collide in the same bucket. Writing keeps
+the bitmap, the hash chains and, where the volume has one, the directory cache
+all in step. A hardfile is read through a memory map and written a block at a
+time, so changing one directory entry on a two gigabyte file writes one block.
+
+DMS decoding checks both the CRC of each packed track and the checksum of the
+unpacked bytes, so a decoder that goes wrong says so rather than handing back
+plausible rubbish. Partitions whose file system is PFS or SFS are listed with
+their type but not opened — those are third-party file systems, not AmigaDOS.
 
 A D64 can be formatted at 35, 40 or 42 tracks — 174,848, 196,608 and 205,312
 bytes. The extra tracks are in the file and are read back, but the BAM a 1541
@@ -464,11 +530,11 @@ do not agree on where to keep their free counts.
 
 ## The system
 
-`Return` walks into a folder or an image and plays a file that is a tune. It
-used to open the player for anything at all, which meant a text file produced a
-sheet asking for two hex addresses that were never going to exist; now it says
-so in the status line instead, and `⇧Return` still forces the player onto a file
-the browser cannot read as one.
+`Return` walks into a folder or an image and plays a file that is a tune or a
+tracker module. It used to open the player for anything at all, which meant a
+text file produced a sheet asking for two hex addresses that were never going
+to exist; now it says so in the status line instead, and `⇧Return` still forces
+the SID player onto a file the browser cannot read as one.
 
 `⌘O` is the other half: it hands the row to the system, exactly as a double
 click in Finder would. On a `.d64` that is whatever opens `.d64` files on this
@@ -493,6 +559,43 @@ Beyond plain file management: edit the disk header, insert a `DEL` entry to
 draw rules and boxes in a directory, lock and unlock entries, and move an entry
 up or down to rearrange the listing.
 
+## Credits
+
+The two audio engines are vendored into the tree rather than linked, so there is
+no library to find at run time. Both keep their own licence files.
+
+| | | |
+|---|---|---|
+| **cSID-light** | Hermit (Mihaly Horvath) | The SID chip and the 6502 around it, in `Audio/csid.c`. A single C file, trimmed to the playback path. Licensed "do what you want, but please mention me as its original author". |
+| **libopenmpt** | OpenMPT project | The tracker formats — MOD, XM, S3M, IT, MED and the rest — in `Audio/libopenmpt/`. BSD-3-Clause. |
+| **c-flod** | rofl0r, ported from Flod by Christian Corti | The Amiga chiptune players — Future Composer, SoundMon, Hippel, SidMon, Whittaker, Hubbard, Fred, Delta Music, Digital Mugician, SoundFX — in `Audio/cflod/`. **CC BY-NC-SA 3.0**, which is not the licence the rest of this carries. |
+
+The `character.rom` and `pet_characters.rom` files are the Commodore 64 and PET
+character generators.
+
+### What was changed
+
+cSID-light's own front end and file loading were removed; its CPU and SID
+emulation are untouched. The additions are a small API for the load address,
+the init and play routines, the A/X/Y byte and an explicit playback rate, plus
+a per-voice tap for the oscilloscope.
+
+libopenmpt is the released source with the test suites and the build system
+dropped. Only its C API is exposed to Swift, through a shim the size of the SID
+one.
+
+c-flod needed three changes. It traps into the debugger when a file will not
+fit one of its fixed-size buffers, which in an application means the process
+dies — and since these formats are recognised by handing the file to each
+player in turn, being wrong has to be survivable. Those checks guard writes
+into the buffers, so they cannot simply be compiled out; instead there is a
+landing point in the shim that they jump back to, and the load fails rather
+than the app. It also assumed an x86 debug instruction, and allowed a module
+only 286 KB of sample memory where the machines these came from had two
+megabytes. Its tracker and FastTracker players are left out: libopenmpt plays
+those, and c-flod's FastTracker is a 5.8 MB static structure dimensioned for 32
+instruments that fails on ordinary XM files.
+
 ## Tests
 
 ```bash
@@ -506,3 +609,12 @@ edit — including packing a D64 until it is full — and round trips a T64.
 It also covers the transaction rules above: that edits stay off disk until the
 panel leaves, that leaving normally commits them, and that `Esc` discards them
 without changing the file.
+
+The music side is checked against real collections rather than fixtures. SID:
+the naming convention against every shape on the disks, PSID parsing, and the
+Music Assembler signature across 256 tunes. Modules: that content detection
+finds all 152 modules in the music folder and 47 more inside 200 ADF and DMS
+images while taking none of 601 icons, libraries, fonts, bitmaps and source
+files for one; that both engines open and sound every module found; and that
+sixty-four files of noise can be handed to every chiptune player without taking
+the process down.

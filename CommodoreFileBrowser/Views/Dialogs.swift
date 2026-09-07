@@ -511,42 +511,72 @@ struct HelpSheet: View {
     let palette: Palette
     let onClose: () -> Void
 
-    private let bindings: [(String, String)] = [
-        ("↑ ↓", "Move the cursor"),
-        ("⇧↑ ⇧↓", "Move ten rows"),
-        ("Page ↑ / ↓, Home, End", "Jump through the listing"),
-        ("Tab", "Switch to the other panel"),
-        ("Space", "Mark the file under the cursor"),
-        ("+ / - / *", "Mark all, unmark all, invert marks"),
-        ("Return", "Enter a folder or an image, or play a file that is a tune"),
-        ("⇧Return", "Play anyway, entering the addresses by hand"),
-        ("Right click", "Open, open with, show in Finder, and the rest of these"),
-        ("⌘↑ ⌘↓ in the player", "Play the previous or next file"),
-        ("⌘← ⌘→ in the player", "Step the A,X,Y byte, restarting on that song"),
-        ("", "The player has an oscilloscope, and can export it as video"),
-        ("← or Delete", "Go up, saving the disk image on the way out"),
-        ("", "The cursor returns to where it was in each folder"),
-        ("Esc", "Go up without saving the disk image"),
-        ("⌘S", "Save the open disk image without leaving it"),
-        ("F1", "This help"),
-        ("F2", "New disk image (D64 / D71 / D81)"),
-        ("F3", "View the file under the cursor"),
-        ("⇧F3", "View it as a bitmap"),
-        ("", "The viewer also lists tokenised BASIC in the Commodore font"),
-        ("F4", "Edit the disk header of the open image"),
-        ("F5", "Copy to the other panel"),
-        ("F6", "Move to the other panel"),
-        ("⇧F6 or ⌘R", "Rename"),
-        ("F7", "New folder"),
-        ("F8", "Delete"),
-        ("F9", "Rename"),
-        ("⌘O", "Open the file with the app macOS uses for it"),
-        ("⌥⌘R", "Show it in Finder"),
-        ("F10", "Quit"),
-        ("⌘D", "Jump to the list of volumes"),
-        ("Ctrl-Shift or ⇧⌘C", "Switch the Commodore font between upper and lower case"),
-        ("⌘H", "Show or hide hidden files"),
-        ("⌘↑ / ⌘↓", "Rearrange an entry inside a disk image")
+    private struct Section: Identifiable {
+        let title: String
+        let rows: [(key: String, what: String)]
+        var id: String { title }
+    }
+
+    /// Grouped the way the keys are reached for rather than by which key they
+    /// happen to be, so the table can be read down a column.
+    private let sections: [Section] = [
+        Section(title: "Moving around", rows: [
+            ("↑ ↓", "Move the cursor"),
+            ("⇧↑ ⇧↓", "Move ten rows"),
+            ("Page ↑ ↓", "Move a screen"),
+            ("Home / End", "First or last row"),
+            ("Tab", "Switch to the other panel"),
+            ("→", "Enter a folder or an image — never goes up"),
+            ("← / Delete / ⌘←", "Go up, saving the disk image on the way out"),
+            ("Esc", "Go up without saving the disk image"),
+            ("⌘D", "Jump to the list of volumes"),
+            ("⌘U", "Re-read the panels from disk"),
+        ]),
+        Section(title: "Marking", rows: [
+            ("Space", "Mark the file under the cursor"),
+            ("+ / −", "Mark all, unmark all"),
+            ("*", "Invert the marks"),
+        ]),
+        Section(title: "Files", rows: [
+            ("Return", "Enter a folder or an image, or play a tune or a module"),
+            ("F5", "Copy to the other panel"),
+            ("F6", "Move to the other panel"),
+            ("F7", "New folder"),
+            ("F8", "Delete"),
+            ("F9 / ⇧F6 / ⌘R", "Rename"),
+            ("⌘O", "Open with the app macOS uses for it"),
+            ("⌥⌘R", "Show in Finder"),
+            ("⇧⌘.", "Show or hide hidden files"),
+            ("Right click", "All of these, plus Open With"),
+        ]),
+        Section(title: "Viewing", rows: [
+            ("F3", "View the file under the cursor"),
+            ("⇧F3", "View it as a bitmap"),
+            ("", "Tokenised BASIC is listed in the Commodore font"),
+        ]),
+        Section(title: "Disk images", rows: [
+            ("F2", "New image (D64, D67, D71, D81, D80, D82, ADF)"),
+            ("F4", "Edit the disk header"),
+            ("⌘S", "Save the open image without leaving it"),
+            ("⌘↑ ⌘↓", "Move an entry within an image directory"),
+            ("", "Commodore menu: DEL entries, lock, unpack a DMS to ADF"),
+        ]),
+        Section(title: "Music", rows: [
+            ("Return", "Play a SID tune or a tracker module"),
+            ("⇧Return", "Force the SID player on, entering addresses by hand"),
+            ("Space", "Play or pause, in either player"),
+            ("⌘↑ ⌘↓", "Previous or next file, without leaving the player"),
+            ("⌘← ⌘→", "Step the SID song byte, restarting on that song"),
+            ("", "The SID player has a scope, and exports it as video"),
+        ]),
+        Section(title: "Appearance", rows: [
+            ("Ctrl-Shift / ⇧⌘C", "Switch the Commodore font between upper and lower case"),
+            ("⌘,", "Settings: theme, palette, character ROM"),
+        ]),
+        Section(title: "The app", rows: [
+            ("F1", "This help"),
+            ("F10 / ⌘Q", "Quit"),
+        ]),
     ]
 
     var body: some View {
@@ -558,29 +588,63 @@ struct HelpSheet: View {
             }
             .padding(16)
             Divider().overlay(palette.color(.border))
+
             ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(bindings, id: \.0) { key, description in
-                        HStack(alignment: .top, spacing: 12) {
-                            Text(key)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(palette.color(.accent))
-                                .frame(width: 170, alignment: .leading)
-                            Text(description)
-                                .font(.system(size: 11))
-                                .foregroundStyle(palette.color(.text))
-                        }
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(sections) { section in
+                        table(section)
                     }
-                    Divider().padding(.vertical, 6)
-                    Text("If macOS uses F1-F12 for screen brightness and media, hold Fn, or turn on “Use F1, F2, etc. keys as standard function keys” in System Settings › Keyboard.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(palette.color(.dim))
-                        .fixedSize(horizontal: false, vertical: true)
+                    footnote
                 }
                 .padding(16)
             }
         }
-        .frame(width: 480, height: 520)
+        .frame(width: 560, height: 620)
         .background(palette.color(.window))
+    }
+
+    private func table(_ section: Section) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(section.title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(palette.color(.dim))
+                .padding(.bottom, 6)
+
+            VStack(spacing: 0) {
+                ForEach(Array(section.rows.enumerated()), id: \.offset) { index, row in
+                    HStack(alignment: .firstTextBaseline, spacing: 14) {
+                        // An empty key marks a note about the row above it, so
+                        // it lines up under the descriptions rather than
+                        // leaving a gap where a key would be.
+                        Text(row.key)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(palette.color(.accent))
+                            .frame(width: 150, alignment: .leading)
+                        Text(row.what)
+                            .font(.system(size: 11))
+                            .foregroundStyle(palette.color(row.key.isEmpty ? .dim : .text))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    // Banded rows, so the eye can cross the gap between a key
+                    // and what it does without losing the line.
+                    .background(index.isMultiple(of: 2)
+                                ? palette.color(.panel).opacity(0.5) : Color.clear)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(palette.color(.border).opacity(0.5)))
+        }
+    }
+
+    private var footnote: some View {
+        Text("If macOS uses F1–F12 for screen brightness and media, hold Fn, or turn on \u{201C}Use F1, F2, etc. keys as standard function keys\u{201D} in System Settings › Keyboard. Every function key also has a button in the bar along the bottom and an entry in the menus.")
+            .font(.system(size: 10))
+            .foregroundStyle(palette.color(.dim))
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

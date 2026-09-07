@@ -1579,5 +1579,151 @@ do {
     print("  FAIL sid engine: \(error)"); failures += 1
 }
 
+// --- Module detection -------------------------------------------------------
+print("\n=== module detection")
+do {
+    // The channel-count marks, which are spelled rather than tabulated.
+    let spelled: [(String, Bool)] = [
+        ("6CHN", true), ("8CHN", true), ("16CH", true), ("32CN", true), ("TDZ3", true),
+        ("M.K.", true), ("FLT8", true), ("OKTA", true),
+        ("0CHN", false), ("ABCD", false), ("CHN4", false), ("TDZ9", false), ("\0\0\0\0", false),
+    ]
+    // A believable 31-sample header to hang them on: one pattern, one order
+    // entry, and no sample data. A pattern is 64 rows of one note per channel,
+    // so how big the file has to be depends on the mark itself.
+    func skeleton(_ tag: String, channels: Int = 4) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: 1084 + 64 * channels * 4)
+        bytes[950] = 1
+        bytes.replaceSubrange(1080..<1084, with: Array(tag.utf8).prefix(4))
+        return bytes
+    }
+    // How many voices each mark stands for, so the skeleton is the right size.
+    func voices(_ tag: String) -> Int {
+        switch tag {
+        case "FLT8", "OKTA", "CD81", "OCTA": return 8
+        case "6CHN": return 6
+        case "8CHN": return 8
+        case "16CH", "16CN": return 16
+        case "32CH", "32CN": return 32
+        case "TDZ3": return 3
+        default: return 4
+        }
+    }
+    for (tag, want) in spelled {
+        let got = ModuleLoader.detect(skeleton(tag, channels: voices(tag))) != nil
+        check(got == want, "\(tag.debugDescription) at 1080 \(want ? "is" : "is not") a module")
+    }
+
+    // The header has to add up, not just carry the mark. A module accounts for
+    // its own file: header, patterns, then samples.
+    var noSongLength = skeleton("M.K."); noSongLength[950] = 0
+    check(ModuleLoader.detect(noSongLength) == nil, "a song of no length rules it out")
+    var wildOrder = skeleton("M.K."); wildOrder[952 + 5] = 200
+    check(ModuleLoader.detect(wildOrder) == nil, "an order entry past 127 rules it out")
+    var truncated = skeleton("M.K."); truncated.removeLast(1)
+    check(ModuleLoader.detect(truncated) == nil, "a file too short for its patterns rules it out")
+    var hugeSamples = skeleton("M.K.")
+    hugeSamples[20 + 22] = 0xFF; hugeSamples[20 + 23] = 0xFF   // 128 KB in sample 1 alone
+    check(ModuleLoader.detect(hugeSamples) == nil, "samples that could not fit rule it out")
+    // An eight channel module needs twice the pattern space, and saying so is
+    // the difference between reading it and rejecting it.
+    check(ModuleLoader.detect(skeleton("8CHN", channels: 8)) != nil, "8CHN sizes its patterns for eight")
+    check(ModuleLoader.detect(skeleton("8CHN", channels: 4)) == nil, "and a four channel file is not one")
+
+    // The user's own collection on the file system.
+    let music = "/Users/macc/Emulation/Amiga/Music"
+    var found: [String: Int] = [:], missed: [String] = [], unmarked = 0
+    if let walk = FileManager.default.enumerator(atPath: music) {
+        for case let rel as String in walk {
+            if rel.hasPrefix("SAMPLES") || (rel as NSString).lastPathComponent.hasPrefix(".") { continue }
+            let path = "\(music)/\(rel)"
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue,
+                  let data = FileManager.default.contents(atPath: path) else { continue }
+            guard let module = ModuleLoader.detect([UInt8](data)) else { continue }
+            found[module.format.name.components(separatedBy: " (")[0], default: 0] += 1
+            let base = (rel as NSString).lastPathComponent.lowercased()
+            if !base.hasPrefix("mod.") && !base.hasPrefix("med.")
+                && !base.hasSuffix(".mod") && !base.hasSuffix(".xm")
+                && !base.hasSuffix(".s3m") && !base.hasSuffix(".med") { unmarked += 1 }
+            if module.title.isEmpty, case .protracker = module.format { missed.append(rel) }
+        }
+    }
+    let total = found.values.reduce(0, +)
+    check(total >= 150, "\(total) modules recognised in the music folder by content alone")
+    for (kind, count) in found.sorted(by: { $0.key < $1.key }) {
+        check(count > 0, "  \(count) \u{00D7} \(kind)")
+    }
+    check(found["ProTracker"] ?? 0 >= 98, "\(found["ProTracker"] ?? 0) ProTracker modules")
+    check(found["OctaMED"] ?? 0 >= 9, "\(found["OctaMED"] ?? 0) OctaMED modules, which no name marks as such")
+
+    // The point of all this: modules inside real Amiga images, where the name
+    // is whatever the person who saved it felt like typing.
+    let places = ["/Users/macc/Emulation/Amiga/harddisks/dh2/!DMS",
+                  "/Users/macc/Emulation/Amiga/Floppys",
+                  "/Users/macc/Emulation/Amiga/FS-UAE/Floppies"]
+    var images: [String] = []
+    for place in places {
+        let listing = (try? FileManager.default.contentsOfDirectory(atPath: place)) ?? []
+        for name in listing.sorted() where ["adf", "dms"].contains((name as NSString).pathExtension.lowercased()) {
+            images.append("\(place)/\(name)")
+        }
+    }
+    check(images.count > 250, "\(images.count) Amiga images to look through")
+
+    var inImages = 0, nameless: [String] = [], opened = 0
+    func sweep(_ img: ADFImage, _ path: [String], _ depth: Int) {
+        guard depth < 6, let entries = try? img.entries(at: path) else { return }
+        for entry in entries {
+            if entry.isDirectory { sweep(img, path + [entry.displayName], depth + 1); continue }
+            guard let data = try? img.read(entry, at: path),
+                  ModuleLoader.detect([UInt8](data)) != nil else { continue }
+            inImages += 1
+            let base = entry.displayName.lowercased()
+            if !base.hasPrefix("mod.") && !base.hasPrefix("med.")
+                && !base.hasSuffix(".mod") && !base.hasSuffix(".med") { nameless.append(entry.displayName) }
+        }
+    }
+    for path in images {
+        let url = URL(fileURLWithPath: path)
+        let img = url.pathExtension.lowercased() == "dms"
+            ? try? ADFImage(unpacking: url) : try? ADFImage(url: url)
+        guard let img else { continue }
+        opened += 1
+        sweep(img, [], 0)
+    }
+    check(opened > 190, "\(opened) of them opened")
+    check(inImages >= 45, "\(inImages) modules inside them, found without reading a single name")
+    check(nameless.count >= 5,
+          "\(nameless.count) carry no name marker at all: \(nameless.sorted().prefix(6).joined(separator: ", "))")
+
+    // Nothing that is not music may be taken for a module. Amiga icons,
+    // libraries, fonts, bitmaps and source code all live beside the tunes.
+    var nonMusic = 0, falsePositives: [String] = []
+    let wanted = ["info", "library", "font", "iff", "device", "datatype", "guide", "c", "s", "doc", "prefs"]
+    if let walk = FileManager.default.enumerator(atPath: "/Users/macc/Emulation/Amiga") {
+        for case let rel as String in walk {
+            guard wanted.contains((rel as NSString).pathExtension.lowercased()),
+                  !rel.hasPrefix("Music/"),
+                  let data = FileManager.default.contents(atPath: "/Users/macc/Emulation/Amiga/\(rel)"),
+                  data.count > 2048 else { continue }
+            nonMusic += 1
+            if nonMusic > 600 { break }
+            if let m = ModuleLoader.detect([UInt8](data)) { falsePositives.append("\(rel) -> \(m.format.name)") }
+        }
+    }
+    check(nonMusic > 300, "\(nonMusic) non-music Amiga files to try it on")
+    check(falsePositives.isEmpty, "none of them was taken for a module\(falsePositives.isEmpty ? "" : ": \(falsePositives.prefix(3))")")
+
+    // A title comes out of the file, not the name.
+    if let data = FileManager.default.contents(atPath: "\(music)/MACMUSICS/mod.macos"),
+       let m = ModuleLoader.detect([UInt8](data)) {
+        check(m.format == .protracker("4 channels"), "mod.macos is a 4 channel ProTracker module")
+        check(m.title == "macos", "and calls itself \"\(m.title)\"")
+    } else { check(false, "mod.macos did not detect") }
+} catch {
+    print("  FAIL modules: \(error)"); failures += 1
+}
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) CHECK(S) FAILED")
 exit(failures == 0 ? 0 : 1)

@@ -35,8 +35,9 @@ struct ViewerContent: Identifiable {
     var title: String
     var data: Data
     var isPRG: Bool
-    /// Shift+F3 opens straight into the bitmap view.
-    var startInBitmap: Bool = false
+    /// Which pane the sheet opens on: ⇧F3 asks for the bitmap, and an Amiga
+    /// picture opens on itself rather than on a hex dump of itself.
+    var startMode: ViewerMode = .hex
 }
 
 enum AppSheet: Identifiable {
@@ -50,6 +51,7 @@ enum AppSheet: Identifiable {
     case addDecoration
     case player
     case module
+    case sample
     case discardChanges
     case help
 
@@ -65,6 +67,7 @@ enum AppSheet: Identifiable {
         case .addDecoration: return "decorate"
         case .player: return "player"
         case .module: return "module"
+        case .sample: return "sample"
         case .discardChanges: return "discard"
         case .help: return "help"
         }
@@ -78,6 +81,7 @@ final class AppModel: ObservableObject {
     let settings: SettingsStore
     let player = SIDPlayer()
     let modulePlayer = ModulePlayer()
+    let samplePlayer = SamplePlayer()
 
     @Published var activeSide: PanelSide = .left
     @Published var sheet: AppSheet?
@@ -89,6 +93,8 @@ final class AppModel: ObservableObject {
     /// The module the tracker sheet is showing, held apart from `sheet` for
     /// the same reason.
     @Published var moduleRequest: ModuleRequest?
+    /// And the sample the 8SVX sheet is showing.
+    @Published var sampleRequest: SampleRequest?
     /// Whether the open image has a directory whose order can be rearranged.
     /// Kept here rather than read off the panel when the menu is drawn: the
     /// menu is rebuilt from what it observes on this object, and the panels
@@ -203,6 +209,7 @@ final class AppModel: ObservableObject {
         if alertMessage != nil { return true }
         if case .player = sheet { return handlePlayerKey(event) }
         if case .module = sheet { return handleModuleKey(event) }
+        if case .sample = sheet { return handleSampleKey(event) }
         guard sheet == nil else { return false }
         let shift = event.modifierFlags.contains(.shift)
         let command = event.modifierFlags.contains(.command)
@@ -300,6 +307,17 @@ final class AppModel: ObservableObject {
                 beginModulePlay(module, named: item.title)
                 return
             }
+            // And an Amiga picture is the third. It is not a tune at all, so
+            // Return opens the viewer on it rather than a player — the same
+            // key, on the thing the file actually is.
+            if !manual, detected == nil, let form = IFFLoader.detect(bytes) {
+                if form.isPicture {
+                    sheet = .viewer(ViewerContent(title: item.title, data: payload.data,
+                                                  isPRG: false, startMode: .image))
+                    return
+                }
+                if case .eightSVX = form { beginSamplePlay(bytes, named: item.title); return }
+            }
             // Say what to press instead, since Return otherwise looks as though
             // it did nothing at all.
             if requireTune, detected == nil { statusMessage = Self.notATuneHint; return }
@@ -332,6 +350,23 @@ final class AppModel: ObservableObject {
         }
         moduleRequest = request
         sheet = .module
+    }
+
+    /// Open the sample sheet on an 8SVX. Same shape as the module above: the
+    /// request is made first so the player knows which sheet owns the sound.
+    private func beginSamplePlay(_ bytes: [UInt8], named name: String) {
+        do {
+            let sound = try EightSVXDecoder.decode(bytes)
+            let request = SampleRequest(name: name, sound: sound)
+            samplePlayer.load(sound, owner: request.id)
+            sampleRequest = request
+            sheet = .sample
+        } catch {
+            // A sample this cannot unpack is a status line, not an alert: it is
+            // the same "Return found nothing to do here" as a file that is not
+            // a tune, and it says which part it could not read.
+            statusMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
     }
 
     // MARK: - Handing a file to the system
@@ -409,6 +444,20 @@ final class AppModel: ObservableObject {
         case 125: playNeighbour(1)                      // down
         case 123: adjustSubsong(-1)                     // left
         case 124: adjustSubsong(1)                      // right
+        default: return false
+        }
+        return true
+    }
+
+    /// The sample sheet has no songs inside it to step through, so only up and
+    /// down do anything — the same walk through the files the other two sheets
+    /// make, which is what lets a directory of mixed files be gone through
+    /// without going back to the listing between each one.
+    private func handleSampleKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command) else { return false }
+        switch Int(event.keyCode) {
+        case 126: playNeighbour(-1)                     // up
+        case 125: playNeighbour(1)                      // down
         default: return false
         }
         return true
@@ -886,8 +935,13 @@ final class AppModel: ObservableObject {
             let payload = try read(item, from: activePanel)
             let isPRG = item.kind.isInsideImage ? item.cbm?.type == .prg && item.cbm?.encoding == .petscii
                                                 : item.url?.pathExtension.lowercased() == "prg"
+            // ⇧F3 asked for the bitmap and gets it. Otherwise a file that says
+            // it is a picture opens on the picture: a hex dump of an ILBM is
+            // not what anyone pressed F3 for.
+            var start: ViewerMode = bitmap ? .bitmap : .hex
+            if !bitmap, IFFLoader.detect([UInt8](payload.data))?.isPicture == true { start = .image }
             sheet = .viewer(ViewerContent(title: item.title, data: payload.data,
-                                          isPRG: isPRG, startInBitmap: bitmap))
+                                          isPRG: isPRG, startMode: start))
         } catch { fail(error) }
     }
 

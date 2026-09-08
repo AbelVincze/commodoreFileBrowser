@@ -206,6 +206,13 @@ struct ContentView: View {
                                   onClose: { model.modulePlayer.unload(); model.sheet = nil })
                     .id(request.id)
             }
+        case .sample:
+            if let request = model.sampleRequest {
+                SamplePlayerSheet(request: request, palette: palette,
+                                  player: model.samplePlayer, settings: settings,
+                                  onClose: { model.samplePlayer.unload(); model.sheet = nil })
+                    .id(request.id)
+            }
         case .viewer(let content):
             ViewerSheet(content: content, palette: palette, settings: settings,
                         onClose: { model.sheet = nil })

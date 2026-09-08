@@ -1912,5 +1912,298 @@ do {
     print("  FAIL module engine: \(error)"); failures += 1
 }
 
+// --- IFF --------------------------------------------------------------------
+print("\n=== IFF")
+do {
+    /// A picture built by hand, so the decoder is checked against bits whose
+    /// answer is known rather than against whatever a disk happens to hold.
+    func ilbm(width: Int, height: Int, planes: Int,
+              palette: [(UInt8, UInt8, UInt8)], body: [UInt8],
+              compression: UInt8 = 0, camg: UInt32? = nil) -> [UInt8] {
+        func be16(_ v: Int) -> [UInt8] { [UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)] }
+        func be32(_ v: Int) -> [UInt8] {
+            [UInt8(v >> 24 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)]
+        }
+        func chunk(_ id: String, _ payload: [UInt8]) -> [UInt8] {
+            [UInt8](id.utf8) + be32(payload.count) + payload + (payload.count % 2 == 1 ? [0] : [])
+        }
+        let bmhd = be16(width) + be16(height) + be16(0) + be16(0)
+            + [UInt8(planes), 0, compression, 0] + be16(0) + [10, 11] + be16(width) + be16(height)
+        var payload = [UInt8]("ILBM".utf8)
+        payload += chunk("BMHD", bmhd)
+        payload += chunk("CMAP", palette.flatMap { [$0.0, $0.1, $0.2] })
+        if let camg { payload += chunk("CAMG", be32(Int(camg))) }
+        payload += chunk("BODY", body)
+        return [UInt8]("FORM".utf8) + be32(payload.count) + payload
+    }
+
+    func pixel(_ image: NSImage, _ x: Int, _ y: Int) -> (Int, Int, Int)? {
+        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let c = rep.colorAt(x: x, y: y) else { return nil }
+        return (Int(c.redComponent * 255 + 0.5),
+                Int(c.greenComponent * 255 + 0.5),
+                Int(c.blueComponent * 255 + 0.5))
+    }
+    func near(_ got: (Int, Int, Int)?, _ want: (Int, Int, Int)) -> Bool {
+        guard let got else { return false }
+        return abs(got.0 - want.0) <= 2 && abs(got.1 - want.1) <= 2 && abs(got.2 - want.2) <= 2
+    }
+
+    // Two planes, sixteen pixels across, two rows. The left half of row one is
+    // index 1 and the right half index 2; row two is index 3 throughout.
+    let flat: [UInt8] = [0xFF, 0x00, 0x00, 0xFF,
+                         0xFF, 0xFF, 0xFF, 0xFF]
+    let cmap4: [(UInt8, UInt8, UInt8)] = [(0x11, 0x11, 0x11), (0xFF, 0x11, 0x11),
+                                          (0x11, 0xFF, 0x11), (0xFF, 0xFF, 0xFF)]
+    let plain = ilbm(width: 16, height: 2, planes: 2, palette: cmap4, body: flat)
+    check(IFFLoader.detect(plain) != nil, "a hand built ILBM is recognised")
+    do {
+        let picture = try ILBMDecoder.decode(plain)
+        check(picture.width == 16 && picture.height == 2, "\(picture.width)x\(picture.height) from the BMHD")
+        check(near(pixel(picture.image, 0, 0), (0xFF, 0x11, 0x11)), "planes gather into index 1")
+        check(near(pixel(picture.image, 8, 0), (0x11, 0xFF, 0x11)), "and into index 2 across the byte")
+        check(near(pixel(picture.image, 0, 1), (0xFF, 0xFF, 0xFF)), "and into index 3 on the second row")
+        check(abs(picture.heightScale - 11.0 / 10.0) < 0.001, "the 10:11 aspect is carried through")
+    } catch { check(false, "hand built ILBM: \(error)") }
+
+    // The same picture packed. One literal run of eight bytes says it all.
+    let packed = ilbm(width: 16, height: 2, planes: 2, palette: cmap4,
+                      body: [7] + flat, compression: 1)
+    do {
+        let picture = try ILBMDecoder.decode(packed)
+        check(near(pixel(picture.image, 0, 0), (0xFF, 0x11, 0x11))
+              && near(pixel(picture.image, 8, 0), (0x11, 0xFF, 0x11))
+              && near(pixel(picture.image, 0, 1), (0xFF, 0xFF, 0xFF)),
+              "ByteRun1 unpacks to the same picture")
+    } catch { check(false, "packed ILBM: \(error)") }
+
+    // A run of the same byte, which the literal case above never exercises.
+    let runs = ilbm(width: 16, height: 2, planes: 2, palette: cmap4,
+                    body: [0, 0xFF, 0, 0x00, 0, 0x00, 0, 0xFF, UInt8(bitPattern: -3), 0xFF],
+                    compression: 1)
+    do {
+        let picture = try ILBMDecoder.decode(runs)
+        check(near(pixel(picture.image, 0, 1), (0xFF, 0xFF, 0xFF)), "a ByteRun1 repeat fills the second row")
+    } catch { check(false, "ByteRun1 repeats: \(error)") }
+
+    // Extra Half-Brite: six planes, a palette that stops at 32, and an index
+    // of 33, which must come out as colour 1 with every gun halved.
+    var ehbBody = [UInt8](repeating: 0, count: 2 * 6)
+    ehbBody[0] = 0x80        // plane 0, pixel 0
+    ehbBody[10] = 0x80       // plane 5, pixel 0
+    var cmap32 = [(UInt8, UInt8, UInt8)](repeating: (0x11, 0x11, 0x11), count: 32)
+    cmap32[1] = (0xC8, 0x64, 0x32)
+    let ehb = ilbm(width: 16, height: 1, planes: 6, palette: cmap32, body: ehbBody, camg: 0x0080)
+    do {
+        let picture = try ILBMDecoder.decode(ehb)
+        check(picture.mode.contains("EHB"), "six planes and 32 colours read as EHB — \(picture.mode)")
+        check(near(pixel(picture.image, 0, 0), (0x64, 0x32, 0x19)), "index 33 is colour 1 halved")
+    } catch { check(false, "EHB: \(error)") }
+
+    // Hold-and-modify: pixel one takes colour 1, pixel two holds it and
+    // replaces red with full scale.
+    var hamBody = [UInt8](repeating: 0, count: 2 * 6)
+    hamBody[0] = 0x80                    // plane 0: pixel 0 -> control 00, data 1
+    hamBody[10] = 0x40                   // plane 5: pixel 1 -> control 10 (red)
+    for plane in 0..<4 { hamBody[plane * 2] |= 0x40 }   // data 15 on pixel 1
+    var cmapHAM = [(UInt8, UInt8, UInt8)](repeating: (0x11, 0x11, 0x11), count: 16)
+    cmapHAM[1] = (0x11, 0x22, 0x33)
+    let ham = ilbm(width: 16, height: 1, planes: 6, palette: cmapHAM, body: hamBody, camg: 0x0800)
+    do {
+        let picture = try ILBMDecoder.decode(ham)
+        check(picture.mode.contains("HAM6"), "six planes with the HAM bit read as HAM6 — \(picture.mode)")
+        check(near(pixel(picture.image, 0, 0), (0x11, 0x22, 0x33)), "a control 00 pixel is a palette index")
+        check(near(pixel(picture.image, 1, 0), (0xFF, 0x22, 0x33)), "and the next holds it, replacing red")
+    } catch { check(false, "HAM6: \(error)") }
+
+    // A palette written the way an OCS painter wrote one: four bits a gun,
+    // parked in the high nibble. Taken as read it renders at half brightness.
+    let dim: [(UInt8, UInt8, UInt8)] = [(0x00, 0x00, 0x00), (0xF0, 0x80, 0x00),
+                                        (0x00, 0xF0, 0x00), (0xF0, 0xF0, 0xF0)]
+    do {
+        let picture = try ILBMDecoder.decode(ilbm(width: 16, height: 2, planes: 2,
+                                                  palette: dim, body: flat))
+        check(near(pixel(picture.image, 0, 0), (0xFF, 0x88, 0x00)), "a four bit palette is widened, not halved")
+    } catch { check(false, "OCS palette: \(error)") }
+
+    // Nonsense must be refused rather than drawn.
+    check(IFFLoader.detect([UInt8]("FORM".utf8) + [0, 0, 0, 4] + [UInt8]("JUNK".utf8)) == nil,
+          "an unknown FORM type is not claimed")
+    check(IFFLoader.detect([UInt8](repeating: 0x41, count: 512)) == nil, "a file of text is not claimed")
+    var truncated = plain
+    truncated.removeLast(truncated.count / 2)
+    _ = try? ILBMDecoder.decode(truncated)
+    check(true, "a truncated picture does not take the process with it")
+
+    // And then the real thing, when this machine has a collection.
+    let places = ["~/Emulation/Amiga/Floppys", "~/Emulation/Amiga/FS-UAE/Floppies"]
+        .map { NSString(string: $0).expandingTildeInPath }
+    var adfs: [String] = []
+    for place in places {
+        adfs += ((try? FileManager.default.contentsOfDirectory(atPath: place)) ?? [])
+            .filter { $0.lowercased().hasSuffix(".adf") }
+            .map { "\(place)/\($0)" }
+    }
+
+    if adfs.isEmpty {
+        print("  --   no ADF collection on this machine, skipping the collection sweep")
+    } else {
+        var found = 0, drawn = 0, samples = 0, anims = 0, flatOnes = 0
+        var refused: [String] = []
+        var modes: Set<String> = []
+
+        let hardfile = NSString(string: "~/Emulation/Amiga/harddisks/system.HDF").expandingTildeInPath
+        var disks: [(String, DiskImage)] = []
+        for path in adfs.sorted() {
+            if let image = try? ADFImage(url: URL(fileURLWithPath: path)) { disks.append((path, image)) }
+        }
+        if FileManager.default.fileExists(atPath: hardfile),
+           let image = try? HDFImage(url: URL(fileURLWithPath: hardfile)) {
+            disks.append((hardfile, image))
+        }
+
+        for (_, image) in disks {
+            func walk(_ at: [String], _ depth: Int) {
+                guard depth < 8, let list = try? image.entries(at: at) else { return }
+                for entry in list {
+                    if entry.isDirectory { walk(at + [entry.displayName], depth + 1); continue }
+                    guard let data = try? image.read(entry, at: at) else { continue }
+                    let bytes = [UInt8](data)
+                    guard let form = IFFLoader.detect(bytes) else { continue }
+                    if case .eightSVX = form { samples += 1; continue }
+                    if case .anim = form { anims += 1 }
+                    found += 1
+                    do {
+                        let picture = try ILBMDecoder.decode(bytes)
+                        drawn += 1
+                        for part in picture.mode.components(separatedBy: " · ") { modes.insert(part) }
+                        // A picture that came out one flat colour usually means
+                        // the planes were read wrong rather than that someone
+                        // saved an empty screen. Sampled over a grid: three
+                        // points on a patterned icon land on the same colour
+                        // often enough to mean nothing.
+                        var seen: Set<String> = []
+                        for gy in 0..<8 {
+                            for gx in 0..<8 {
+                                let x = gx * max(1, picture.width - 1) / 7
+                                let y = gy * max(1, picture.height - 1) / 7
+                                if let c = pixel(picture.image, min(x, picture.width - 1),
+                                                 min(y, picture.height - 1)) {
+                                    seen.insert("\(c.0),\(c.1),\(c.2)")
+                                }
+                            }
+                        }
+                        if seen.count <= 1 { flatOnes += 1 }
+                    } catch {
+                        refused.append("\(entry.displayName): "
+                                       + ((error as? LocalizedError)?.errorDescription ?? "\(error)"))
+                    }
+                }
+            }
+            walk([], 0)
+        }
+
+        check(found > 0, "\(found) pictures, \(samples) samples and \(anims) animations found in \(disks.count) disks")
+        check(refused.isEmpty, "every one of them decoded\(refused.isEmpty ? "" : ": \(refused.prefix(3))")")
+        check(drawn == found, "\(drawn) of \(found) drawn")
+        check(flatOnes * 4 < max(1, drawn), "\(flatOnes) of \(drawn) came out a single flat colour")
+        print("      modes seen: \(modes.sorted().joined(separator: ", "))")
+    }
+} catch {
+    print("  FAIL IFF: \(error)"); failures += 1
+}
+
+// --- 8SVX -------------------------------------------------------------------
+print("\n=== IFF 8SVX")
+do {
+    func svx(rate: Int, oneShot: Int, repeatLength: Int, octaves: Int = 1,
+             compression: UInt8 = 0, body: [UInt8], name: String? = nil) -> [UInt8] {
+        func be32(_ v: Int) -> [UInt8] {
+            [UInt8(v >> 24 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)]
+        }
+        func chunk(_ id: String, _ payload: [UInt8]) -> [UInt8] {
+            [UInt8](id.utf8) + be32(payload.count) + payload + (payload.count % 2 == 1 ? [0] : [])
+        }
+        let vhdr = be32(oneShot) + be32(repeatLength) + be32(0)
+            + [UInt8(rate >> 8 & 0xFF), UInt8(rate & 0xFF), UInt8(octaves), compression]
+            + be32(0x10000)
+        var payload = [UInt8]("8SVX".utf8) + chunk("VHDR", vhdr)
+        if let name { payload += chunk("NAME", [UInt8](name.utf8)) }
+        payload += chunk("BODY", body)
+        return [UInt8]("FORM".utf8) + be32(payload.count) + payload
+    }
+
+    let wave: [UInt8] = (0..<64).map { UInt8(bitPattern: Int8(truncatingIfNeeded: $0 * 4 - 128)) }
+    let oneShot = svx(rate: 16726, oneShot: 64, repeatLength: 0, body: wave, name: "test tone")
+    check(IFFLoader.detect(oneShot) != nil, "a hand built 8SVX is recognised")
+    do {
+        let sound = try EightSVXDecoder.decode(oneShot)
+        check(sound.frames.count == 64, "\(sound.frames.count) frames from the VHDR lengths")
+        check(sound.sampleRate == 16726, "\(Int(sound.sampleRate)) Hz from the header")
+        check(sound.name == "test tone", "the NAME chunk becomes the title")
+        check(sound.loop == nil, "a one-shot has no loop")
+        check(sound.frames[0] == Int16(Int8(bitPattern: 128)) << 8, "eight bit samples widen to sixteen")
+        check(abs(sound.duration - 64.0 / 16726.0) < 0.0001, "and the duration follows from both")
+    } catch { check(false, "hand built 8SVX: \(error)") }
+
+    do {
+        let looped = try EightSVXDecoder.decode(
+            svx(rate: 8363, oneShot: 16, repeatLength: 48, body: wave))
+        check(looped.loop == 16..<64, "an instrument's loop is the tail after the attack")
+    } catch { check(false, "looping 8SVX: \(error)") }
+
+    // A rate of zero is not silence, it is a writer that left the field out.
+    do {
+        let odd = try EightSVXDecoder.decode(svx(rate: 0, oneShot: 64, repeatLength: 0, body: wave))
+        check(odd.sampleRate == 8363, "a missing rate falls back to the tracker default")
+    } catch { check(false, "rateless 8SVX: \(error)") }
+
+    // Fibonacci-delta is refused rather than played as noise.
+    do {
+        _ = try EightSVXDecoder.decode(
+            svx(rate: 16726, oneShot: 64, repeatLength: 0, compression: 1, body: wave))
+        check(false, "a compressed sample should have been refused")
+    } catch {
+        check("\((error as? LocalizedError)?.errorDescription ?? "")".contains("Fibonacci"),
+              "a Fibonacci-delta sample is refused by name")
+    }
+
+    // And the collection, which is loose files on the Mac rather than inside
+    // any disk: 8SVX is what a sampler wrote straight to a floppy.
+    let samples = NSString(string: "~/Emulation/Amiga/Music/SAMPLES").expandingTildeInPath
+    if let walk = FileManager.default.enumerator(atPath: samples) {
+        var found = 0, decoded = 0, looping = 0, longest = 0.0
+        var refused: [String] = []
+        var rates: Set<Int> = []
+        for case let rel as String in walk {
+            guard let data = FileManager.default.contents(atPath: "\(samples)/\(rel)") else { continue }
+            let bytes = [UInt8](data)
+            guard case .eightSVX? = IFFLoader.detect(bytes) else { continue }
+            found += 1
+            do {
+                let sound = try EightSVXDecoder.decode(bytes)
+                decoded += 1
+                rates.insert(Int(sound.sampleRate))
+                if sound.loop != nil { looping += 1 }
+                longest = max(longest, sound.duration)
+                if sound.frames.isEmpty { refused.append("\(rel): decoded to nothing") }
+            } catch {
+                refused.append("\(rel): "
+                               + ((error as? LocalizedError)?.errorDescription ?? "\(error)"))
+            }
+        }
+        if found == 0 {
+            print("  --   no 8SVX collection on this machine, skipping the sweep")
+        } else {
+            check(decoded == found, "\(decoded) of \(found) samples decoded")
+            check(refused.isEmpty, "none was refused\(refused.isEmpty ? "" : ": \(refused.prefix(3))")")
+            check(looping > 0, "\(looping) of them carry a loop point")
+            print(String(format: "      longest %.1fs, %d distinct rates", longest, rates.count))
+        }
+    }
+} catch {
+    print("  FAIL 8SVX: \(error)"); failures += 1
+}
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) CHECK(S) FAILED")
 exit(failures == 0 ? 0 : 1)

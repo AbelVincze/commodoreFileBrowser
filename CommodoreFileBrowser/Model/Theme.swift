@@ -214,6 +214,11 @@ final class SettingsStore: ObservableObject {
     @Published var bitmapInvert: Bool { didSet { save() } }
     /// Whether the viewer reads the first two bytes as a load address.
     @Published var viewerUsesC64Offsets: Bool { didSet { save() } }
+    /// Picture viewer preferences. Aspect correction is on by default: an
+    /// Amiga pixel was not square, and the shape the picture was drawn as is
+    /// the one worth seeing first.
+    @Published var imageZoom: Int { didSet { save() } }
+    @Published var imageCorrectAspect: Bool { didSet { save() } }
     /// SID player preferences, carried from one tune to the next.
     @Published var sidModel: Int { didSet { save() } }
     @Published var scopeEnabled: Bool { didSet { save() } }
@@ -240,6 +245,8 @@ final class SettingsStore: ObservableObject {
         var bitmapMagnification: Int?
         var bitmapInvert: Bool?
         var viewerUsesC64Offsets: Bool?
+        var imageZoom: Int?
+        var imageCorrectAspect: Bool?
         var sidModel: Int?
         var scopeEnabled: Bool?
         var scopeMode: String?
@@ -268,6 +275,8 @@ final class SettingsStore: ObservableObject {
         bitmapMagnification = stored?.bitmapMagnification ?? 2
         bitmapInvert = stored?.bitmapInvert ?? false
         viewerUsesC64Offsets = stored?.viewerUsesC64Offsets ?? true
+        imageZoom = stored?.imageZoom ?? 1
+        imageCorrectAspect = stored?.imageCorrectAspect ?? true
         sidModel = stored?.sidModel ?? 8580
         scopeEnabled = stored?.scopeEnabled ?? false
         scopeMode = stored?.scopeMode ?? "voices"
@@ -287,6 +296,7 @@ final class SettingsStore: ObservableObject {
                             splitFraction: splitFraction,
                             bitmapMagnification: bitmapMagnification, bitmapInvert: bitmapInvert,
                             viewerUsesC64Offsets: viewerUsesC64Offsets,
+                            imageZoom: imageZoom, imageCorrectAspect: imageCorrectAspect,
                             sidModel: sidModel, scopeEnabled: scopeEnabled, scopeMode: scopeMode,
                             moduleScopeMode: moduleScopeMode,
                             sidVolume: sidVolume, exportResolution: exportResolution,

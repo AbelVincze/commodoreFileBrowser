@@ -308,12 +308,13 @@ struct DiskHeaderSheet: View {
 // MARK: - Viewer
 
 enum ViewerMode: String, CaseIterable, Identifiable {
-    case hex, bitmap, basic
+    case hex, bitmap, image, basic
     var id: String { rawValue }
     var label: String {
         switch self {
         case .hex: return "Hex"
         case .bitmap: return "Bitmap"
+        case .image: return "Image"
         case .basic: return "Basic"
         }
     }
@@ -334,6 +335,9 @@ struct ViewerSheet: View {
     @State private var layout: BitmapLayout
     /// Lives here rather than in the pane so it survives a Raw/C64 switch.
     @State private var displayOffset = 0
+    /// The same for the picture pane, which is rebuilt on every mode switch.
+    @State private var imageZoom: Int
+    @State private var correctAspect: Bool
 
     init(content: ViewerContent, palette: Palette, settings: SettingsStore,
          onClose: @escaping () -> Void) {
@@ -341,7 +345,9 @@ struct ViewerSheet: View {
         self.palette = palette
         _settings = ObservedObject(wrappedValue: settings)
         self.onClose = onClose
-        _mode = State(initialValue: content.startInBitmap ? .bitmap : .hex)
+        _mode = State(initialValue: content.startMode)
+        _imageZoom = State(initialValue: settings.imageZoom)
+        _correctAspect = State(initialValue: settings.imageCorrectAspect)
         // C64 offsets are the useful default here, and the choice is remembered.
         _c64View = State(initialValue: settings.viewerUsesC64Offsets && content.data.count >= 2)
         // Only a PRG spends two bytes on a load address; anything else is all data.
@@ -437,6 +443,14 @@ struct ViewerSheet: View {
                            palette: palette,
                            layout: $layout,
                            displayOffset: $displayOffset)
+            case .image:
+                // An IFF carries no load address either, and its own header
+                // says where the pixels start.
+                IFFImagePane(bytes: [UInt8](content.data),
+                             fileName: content.title,
+                             palette: palette,
+                             zoom: $imageZoom,
+                             correctAspect: $correctAspect)
             case .basic:
                 // A listing always starts after the load address, so the
                 // Raw/C64 switch has nothing to say about it.
@@ -451,12 +465,15 @@ struct ViewerSheet: View {
             settings.bitmapInvert = new.invert
         }
         .onChange(of: c64View) { _, new in settings.viewerUsesC64Offsets = new }
+        .onChange(of: imageZoom) { _, new in settings.imageZoom = new }
+        .onChange(of: correctAspect) { _, new in settings.imageCorrectAspect = new }
     }
 
     private var sheetSize: CGSize {
         switch mode {
         case .hex: return CGSize(width: sheetWidth, height: 520)
         case .bitmap: return CGSize(width: 900, height: 620)
+        case .image: return CGSize(width: 900, height: 620)
         case .basic: return CGSize(width: 720, height: 620)
         }
     }
@@ -503,8 +520,8 @@ struct ViewerSheet: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 176)
-                if loadAddress != nil, mode != .basic {
+                .frame(width: 232)
+                if loadAddress != nil, mode != .basic, mode != .image {
                     Picker("", selection: $c64View) {
                         Text("Raw").tag(false)
                         Text("C64").tag(true)

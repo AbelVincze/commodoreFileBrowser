@@ -93,7 +93,7 @@ because the names are never converted to ASCII for display.
 | `Tab` | switch panels |
 | `Space` | mark the file under the cursor |
 | `+` `-` `*` | mark all, unmark all, invert |
-| `Return` | enter a folder or an image, or play a SID tune or a tracker module |
+| `Return` | enter a folder or an image, play a SID tune, a tracker module or an IFF sample, or show an IFF picture |
 | `⇧Return` | force the SID player on, entering the addresses by hand |
 | `⌘O` | open it with the app macOS uses for it |
 | `⌥⌘R` | show it in Finder |
@@ -215,7 +215,9 @@ appear in the footer of the active panel.
 ## The viewer
 
 `F3` opens a file in the viewer; `⇧F3` opens it straight into the bitmap. A
-Hex / Bitmap / Basic switch moves between the three modes.
+Hex / Bitmap / Image / Basic switch moves between the four modes. An Amiga
+picture opens on itself rather than on a hex dump of itself — `F3` on an ILBM
+starts in Image, which is what pressing it on a picture plainly meant.
 
 A **Raw/C64** switch decides what the first two bytes mean. C64, the default,
 reads them as the load address, starts the offsets there and dumps from the
@@ -273,6 +275,59 @@ Hovering reports the byte's offset, its C64 address, its value and its pixel and
 block coordinates, and outlines the block it belongs to. *Save as PNG…* writes
 the rendered image out. Zoom and invert are remembered between files; the block
 geometry is not, since it depends on what the file is. At most 1 MB is drawn.
+
+### IFF pictures
+
+`Return` on an Amiga picture opens it, the same key that plays a tune. The
+viewer's Image mode draws it in its own colours — the one thing in this browser
+that is not two colours tinted from the theme, because a picture brought its
+own thirty-two and the point of showing it is to see them.
+
+An Amiga held a picture as one bitplane per bit of depth, every plane a full
+page of its own, and a pixel's colour index is one bit taken from the same
+place in each. Six planes give 64 indices, and two of the OCS tricks then
+reinterpret them:
+
+* **EHB** — Extra Half-Brite, where the upper 32 indices are the lower 32 with
+  every gun halved. Nothing in the picture says so except a flag, so a file
+  with no `CAMG` but a palette that stops at 32 is read as EHB too, which is
+  what it means.
+* **HAM** — hold-and-modify, where most pixels are not a colour but a change to
+  one channel of the pixel to the left. HAM6 carries four bits a channel and
+  HAM8 six.
+
+Both exist to get more colours out of a palette than the palette has room for.
+Also read: `ByteRun1` packing and uncompressed bodies, one to eight planes, the
+mask plane a stencil keeps where its colour planes would be, and an `ANIM`'s
+first frame — the rest of an animation is deltas against it, and the subtitle
+says how many are not being shown.
+
+A palette written the way the machines of the day wrote one — four bits a gun,
+parked in the high nibble — is widened rather than taken at face value, or
+every colour comes out at half brightness. **Correct aspect** shows the picture
+the shape it was drawn as: an Amiga pixel was not square, and the file records
+how far from square. *Save as PNG* writes it at one pixel per Amiga pixel,
+whatever the zoom.
+
+A `FORM ILBM` holding a palette and no pixels — how DPaint saved its `.col`
+files — is not claimed as a picture. Neither is a truncated one refused: half a
+picture is drawn as far as it goes.
+
+### IFF samples
+
+`Return` on an `8SVX` plays it. Eight bit, one channel, at whatever rate the
+sampler was clocking Paula at — sixteen distinct rates turn up in a collection
+of five hundred, which is why the audio node is built at the file's rate and
+the mixer does the resampling.
+
+An instrument carries a loop point, and *Repeat the loop* plays it the way it
+was meant to be held: the attack once, then the tail round and round. An effect
+has no loop and the toggle does not appear. There is no video export here —
+the exporter counts its frames in SID samples per second, and a 16726 Hz sound
+would come out of step with its own picture.
+
+Fibonacci-delta compressed samples are refused by name rather than played as
+noise. There is not one in five hundred and fifty.
 
 ## Playing SID music
 
@@ -534,6 +589,7 @@ free block count for its type.
 | ADF | 880K and 1.76M floppies — OFS and FFS, plain, international, or with a directory cache |
 | HDF | UAE hardfiles: one bare volume filling the file, or a Rigid Disk Block describing partitions, in which case the root of the image is the partition list |
 | DMS | DiskMasher archives, browsed in place or unpacked to an ADF from the File menu |
+| IFF | `ILBM` pictures and `ANIM` first frames in the viewer, `8SVX` samples in a player — recognised by content, since an Amiga file is as likely to be called `pic.1` as anything else |
 
 Amiga directories are hash tables rather than a list, so the browser walks the
 chains and shows the entries a real AmigaDOS would — including the ones a

@@ -52,6 +52,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = CF00000000000000000010 /* Build configuration list for PBXNativeTarget "CommodoreFileBrowser" */;
 			buildPhases = (
+				CF00000000000000000019 /* Generate App Icon */,
 				CF00000000000000000011 /* Sources */,
 				CF0000000000000000000C /* Frameworks */,
 				CF00000000000000000012 /* Resources */,
@@ -111,6 +112,36 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		CF00000000000000000019 /* Generate App Icon */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/app_icon.png",
+				"$(SRCROOT)/Tools/make-icon.sh",
+			);
+			name = "Generate App Icon";
+			outputPaths = (
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_16x16.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_16x16@2x.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_32x32.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_32x32@2x.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_128x128.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_256x256.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_256x256@2x.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_512x512.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png",
+				"$(SRCROOT)/CommodoreFileBrowser/Assets.xcassets/AppIcon.appiconset/Contents.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n\"$SRCROOT/Tools/make-icon.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		CF00000000000000000011 /* Sources */ = {

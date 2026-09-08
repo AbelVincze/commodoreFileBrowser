@@ -77,7 +77,7 @@ final class AmigaVolume {
             // A great many Amiga floppies carry a loader rather than a file
             // system: the boot block is code, and there is no directory to
             // show. Saying so is more use than showing an empty disk.
-            throw DiskImageError.corrupt("no AmigaDOS file system on this disk")
+            throw DiskImageError.noFileSystem
         }
         self.variant = variant
 
@@ -94,7 +94,7 @@ final class AmigaVolume {
             // Some loader disks stamp a DOS signature on the boot block and
             // then use the rest of the disk as they please. There is no volume
             // here either, whatever the first four bytes claim.
-            throw DiskImageError.corrupt("no AmigaDOS file system on this disk")
+            throw DiskImageError.noFileSystem
         }
     }
 

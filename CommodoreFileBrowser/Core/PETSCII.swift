@@ -101,12 +101,17 @@ enum PETSCII {
     }
 
     /// A file-system safe name for a CBM file, e.g. `my file` -> `my file.prg`.
-    static func hostFileName(_ bytes: [UInt8], type: CBMFileType) -> String {
+    ///
+    /// The extension is the only place a Commodore file type survives on the
+    /// Mac, so it is added by default — but it is not part of the name the disk
+    /// holds, and copying out is offered without it.
+    static func hostFileName(_ bytes: [UInt8], type: CBMFileType,
+                             addingExtension: Bool = true) -> String {
         var name = ascii(trimPadding(bytes))
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespaces)
         if name.isEmpty { name = "unnamed" }
-        return "\(name).\(type.fileExtension)"
+        return addingExtension ? "\(name).\(type.fileExtension)" : name
     }
 }

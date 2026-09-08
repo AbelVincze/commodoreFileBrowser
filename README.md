@@ -136,7 +136,10 @@ Copy and move work in all four directions:
   name. A `.prg` keeps its two byte load address; the file type follows the
   extension (`.prg`, `.seq`, `.usr`, `.rel`) and defaults to `PRG`.
 * **image → Mac** — the file lands as `name.prg`, with the load address
-  restored at the front so it can be loaded again later.
+  restored at the front so it can be loaded again later. The extension is the
+  only place the Commodore file type survives, so it is added by default, but
+  the copy sheet can be told to write the plain disk name instead; the answer
+  is remembered. The load address goes in either way.
 * **Mac → Mac** — including whole folders.
 * **image → image** — between two open images, in either direction.
 
@@ -193,6 +196,13 @@ FILESYSTEM: MACINTOSH HD
 D64 (35 TRACKS)   BAM MISMATCH (665 BLOCKS)   MODIFIED   READ ONLY
 T64 TAPE · 51 KB
 ```
+
+Rows carry the name in the system font, then size, flags and date in the same
+face at a smaller size, with the figures held to an even width so the right
+aligned columns do not shuffle as the listing scrolls. The size is an exact
+byte count — `1,204`, and `Dir` for anything that can be walked into — on the
+Mac side as well as inside an image, since the last hundred bytes are what
+decide whether a file still fits a 170K disk.
 
 `BAM MISMATCH` compares the allocation bitmap against the blocks the directory
 and its files actually occupy. Scene disks routinely leave the two out of step
@@ -560,7 +570,9 @@ On a folder it is a Finder window. The two never overlap: `Return` navigates,
 
 Right clicking a row gives both of those, an *Open With* list built from the
 applications macOS offers for that file, and the commands that were otherwise
-only on function keys — view, play, copy, move, rename, delete.
+only on function keys — view, play, copy, move, rename, delete. *Play as SID*
+reads the file the same way `Return` does, headers and all; the entry below it
+is `⇧Return`, the player forced on with the addresses typed in by hand.
 
 A file inside a disk image is not a file the system can reach, so opening one
 writes a copy to a temporary folder and opens that. It is a copy: edits do not
@@ -568,6 +580,14 @@ go back into the image. The menu says *Open Copy* rather than *Open*, and the
 copy is written read-only, so an editor reports it as locked instead of saving
 into a folder nobody will read again. *Show in Finder* on such a row reveals the
 image itself, the only thing that really exists.
+
+While a sheet or an error message is up the browser takes no input at all. The
+key monitor swallows the keystroke rather than passing it on, and the menus and
+the key bar go grey to say so. Without that a function key still ran: the sheet
+it asked for could not be shown over the alert, so it waited and sprang open the
+moment the alert was dismissed, and `⌘D` — a menu shortcut, never seen by the
+browser's own key handling — moved a panel nobody could see. `⌘Q` is the one
+exception, since it is the way out.
 
 ## Commodore menu
 

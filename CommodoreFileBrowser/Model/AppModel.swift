@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 /// A copy or move waiting for the user to confirm it.
 struct TransferPlan {
@@ -10,6 +11,18 @@ struct TransferPlan {
     /// Editable when exactly one item is being transferred.
     var targetName: String
     var overwrite: Bool = false
+    /// Copying out of a Commodore image, the name picks up the file type as an
+    /// extension — `.prg`, `.seq`, `.usr`, `.rel` — since that is the only
+    /// place the type survives. Off writes the plain Commodore name.
+    var addsHostExtension: Bool = true
+    /// Whether that choice means anything here: only on the way out of a
+    /// Commodore image, since an Amiga name carries no type and a name going
+    /// into an image loses its extension anyway.
+    var canAddHostExtension: Bool = false
+    /// The two spellings of a single item's name, so the field can follow the
+    /// checkbox without having to work out the extension a second time.
+    var nameWithExtension: String = ""
+    var nameWithoutExtension: String = ""
 
     var verb: String { isMove ? "Move" : "Copy" }
     var summary: String {
@@ -76,6 +89,17 @@ final class AppModel: ObservableObject {
     /// The module the tracker sheet is showing, held apart from `sheet` for
     /// the same reason.
     @Published var moduleRequest: ModuleRequest?
+    /// Whether the open image has a directory whose order can be rearranged.
+    /// Kept here rather than read off the panel when the menu is drawn: the
+    /// menu is rebuilt from what it observes on this object, and the panels
+    /// are objects of their own.
+    @Published private(set) var canReorderEntries = false
+
+    /// True while anything modal is on screen. The error alert is not an
+    /// `AppSheet` case, so "is a dialog up" has to name both of them.
+    var isPresentingModal: Bool { sheet != nil || alertMessage != nil }
+
+    private var panelWatch: Set<AnyCancellable> = []
 
     var activePanel: PanelModel { activeSide == .left ? left : right }
     var inactivePanel: PanelModel { activeSide == .left ? right : left }
@@ -85,6 +109,25 @@ final class AppModel: ObservableObject {
         applyHiddenSetting()
         left.restoreLocation()
         right.restoreLocation()
+
+        for panel in [left, right] {
+            panel.objectWillChange
+                .receive(on: RunLoop.main)
+                .sink { [weak self] in self?.refreshMenuState() }
+                .store(in: &panelWatch)
+        }
+        $activeSide
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshMenuState() }
+            .store(in: &panelWatch)
+        refreshMenuState()
+    }
+
+    /// Republished only when the answer changes, so following the panels this
+    /// closely costs nothing on a cursor move.
+    private func refreshMenuState() {
+        let can = activePanel.image?.supportsEntryReordering ?? false
+        if can != canReorderEntries { canReorderEntries = can }
     }
 
     func applyHiddenSetting() {
@@ -153,6 +196,11 @@ final class AppModel: ObservableObject {
             NSApp.terminate(nil)
             return true
         }
+        // The alert is not a sheet, so it leaves the menu bar alone and never
+        // reaches the sheet guard below: a function key would set `sheet` and
+        // have SwiftUI hold that sheet until the alert closed, and ⌘D would fall
+        // through to the menu and move a panel nobody can see. Swallow the lot.
+        if alertMessage != nil { return true }
         if case .player = sheet { return handlePlayerKey(event) }
         if case .module = sheet { return handleModuleKey(event) }
         guard sheet == nil else { return false }
@@ -467,13 +515,14 @@ final class AppModel: ObservableObject {
         var type: CBMFileType
     }
 
-    private func read(_ item: PanelItem, from panel: PanelModel) throws -> Payload {
+    private func read(_ item: PanelItem, from panel: PanelModel,
+                      addingExtension: Bool = true) throws -> Payload {
         switch item.kind {
         case .imageFile:
             guard let image = panel.image, let entry = item.cbm else { throw DiskImageError.fileNotFound }
             let data = try image.read(entry, at: panel.location.imagePath)
             return Payload(data: data,
-                           hostName: entry.hostFileName,
+                           hostName: entry.hostFileName(addingExtension: addingExtension),
                            cbmName: entry.name,
                            type: entry.type)
         default:
@@ -511,16 +560,34 @@ final class AppModel: ObservableObject {
             alertMessage = "Choose a folder or an image on the other side first."
             return
         }
-        var name = items.count == 1 ? items[0].title : ""
+        // The extension question only arises coming out of a Commodore image
+        // onto the Mac. Everywhere else the checkbox stays off the sheet.
+        var canAddExtension = false
+        if case .directory = destination {
+            canAddExtension = items.contains { $0.kind == .imageFile && $0.cbm?.encoding == .petscii }
+        }
+        // Where the checkbox is not offered the answer stays yes, so a name
+        // crossing from a Commodore image into an Amiga one keeps its type.
+        let addsExtension = canAddExtension ? settings.addHostExtension : true
+
+        var withExtension = items.count == 1 ? items[0].title : ""
+        var withoutExtension = withExtension
         if items.count == 1, case .directory = destination, items[0].kind == .imageFile,
            let entry = items[0].cbm {
-            name = entry.hostFileName
+            withExtension = entry.hostFileName(addingExtension: true)
+            withoutExtension = entry.hostFileName(addingExtension: false)
         }
         sheet = .transfer(TransferPlan(isMove: isMove, items: items, destination: destination,
-                                       destinationLabel: inactivePanel.headerTitle, targetName: name))
+                                       destinationLabel: inactivePanel.headerTitle,
+                                       targetName: addsExtension ? withExtension : withoutExtension,
+                                       addsHostExtension: addsExtension,
+                                       canAddHostExtension: canAddExtension,
+                                       nameWithExtension: withExtension,
+                                       nameWithoutExtension: withoutExtension))
     }
 
     func perform(_ plan: TransferPlan) {
+        if plan.canAddHostExtension { settings.addHostExtension = plan.addsHostExtension }
         let source = activePanel
         let target = inactivePanel
         var copied = 0, skipped = 0
@@ -545,7 +612,8 @@ final class AppModel: ObservableObject {
                     continue
                 }
 
-                let payload = try read(item, from: source)
+                let payload = try read(item, from: source,
+                                       addingExtension: plan.addsHostExtension)
                 switch plan.destination {
                 case .volumes:
                     throw TransferError.noDestination
@@ -739,7 +807,8 @@ final class AppModel: ObservableObject {
     // MARK: - Directory decoration
 
     func moveEntry(by delta: Int) {
-        guard let image = activePanel.image, let entry = activePanel.currentItem?.cbm else { return }
+        guard let image = activePanel.image, image.supportsEntryReordering,
+              let entry = activePanel.currentItem?.cbm else { return }
         do {
             try image.moveEntry(entry, by: delta)
             let newCursor = activePanel.cursor + delta

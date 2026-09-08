@@ -23,14 +23,17 @@ struct SIDTune {
     /// Body to copy into memory at `loadAddress`, load address bytes removed.
     var payload: [UInt8]
 
-    var songCount: Int
+    /// How many songs the file holds, or nil where something says there is
+    /// more than one without saying how many — a `!` in a disk name is all the
+    /// naming convention records.
+    var songCount: Int?
     var defaultSong: Int
     /// Value written to A, X and Y before init — how a subtune is chosen.
     var selector: UInt8 = 0
     var sidModel: Int?
     var extraSIDAddresses: [Int] = []
 
-    var hasMultipleSongs: Bool { songCount > 1 }
+    var hasMultipleSongs: Bool { songCount.map { $0 > 1 } ?? true }
 }
 
 enum SIDTuneLoader {
@@ -143,9 +146,11 @@ enum SIDTuneLoader {
                        initAddress: found.init_,
                        playAddress: found.play,
                        payload: Array(prg[2...]),
-                       // The name only says "more than one"; how many is up to
-                       // the tune, so offer a generous range to step through.
-                       songCount: found.multi ? 32 : 1,
+                       // The name only says "more than one", and nothing in the
+                       // file says how many, so the count stays unknown rather
+                       // than being guessed at. The song byte is stepped over
+                       // its whole range either way.
+                       songCount: found.multi ? nil : 1,
                        defaultSong: 1)
     }
 

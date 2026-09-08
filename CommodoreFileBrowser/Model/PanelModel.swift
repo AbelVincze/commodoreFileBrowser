@@ -318,7 +318,7 @@ final class PanelModel: ObservableObject {
         var out = [parentRow()]
         for row in rows {
             let kind: PanelItem.Kind = row.isDir ? .folder : (DiskImageFactory.isImage(row.url) ? .diskImage : .file)
-            let detail = row.isDir ? "—" : ByteCountFormatter.string(fromByteCount: row.size, countStyle: .file)
+            let detail = Self.sizeText(bytes: row.size, isDirectory: row.isDir)
             out.append(PanelItem(id: out.count, kind: kind, title: row.url.lastPathComponent,
                                  detail: detail, url: row.url, byteSize: row.size,
                                  modified: row.date))
@@ -376,12 +376,23 @@ final class PanelModel: ObservableObject {
         return out
     }
 
-    /// The size column of a listing drawn as text: an exact byte count, which
-    /// is what a machine with a byte count in its directory prints.
+    /// The size column, the same in every listing: an exact byte count, which
+    /// is what a machine with a byte count in its directory prints, and `Dir`
+    /// for anything that can be walked into.
+    ///
+    /// The Mac side used to round this off — `1 KB`, `Zero KB` — which reads
+    /// well for a disk and badly for a file you are about to write into a
+    /// 170K image, where the last hundred bytes are the ones that matter.
+    static func sizeText(bytes: Int64?, isDirectory: Bool) -> String {
+        if isDirectory { return "Dir" }
+        guard let bytes else { return "" }
+        return bytes.formatted(.number)
+    }
+
     private static func sizeText(for entry: ImageEntry) -> String {
         if entry.isDirectory { return "Dir" }
         guard let bytes = entry.byteSize else { return "\(entry.blocks)" }
-        return bytes.formatted(.number)
+        return sizeText(bytes: Int64(bytes), isDirectory: false)
     }
 
     /// One directory row the way a 1541 prints it: blocks, "name", type.

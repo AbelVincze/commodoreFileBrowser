@@ -1,2 +1,24 @@
 TODO:
 keyboard nav in VIEW (Copy hex data as text)
+
+- drag'n'drop (in and out) like in finder (same vol move, diff vol copy by defualt, modofier changes it)
+
+- set color for oscilloscope video export
+- set bg color of oscilloscope in modal
+
+- with active modal do not capture key, nor execute menu functions...
+
+
+- text view (c64 screen/petscii, amiga, normal)
+- hex view (c64 screen/petscii, amiga, normal)
+- bitmap view (parameter block, image?)
+
+
+fix:
+sidplayer:
+- (info 32 track???)
+- context player -> no address detection
+
+
+
+mass file rename

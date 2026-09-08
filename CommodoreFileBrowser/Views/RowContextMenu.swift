@@ -46,7 +46,12 @@ struct RowContextMenu: View {
             if item.kind != .folder, item.kind != .volume {
                 Button("View") { run { model.beginView() } }
                 Button("View as Bitmap") { run { model.beginView(bitmap: true) } }
-                Button("Play as SID…") { run { model.beginPlay(manual: true) } }
+                // Detection first, the same as Return and the Commodore menu.
+                // This item used to skip it, which left every tune guessing at
+                // init = load and play = load + 3 — wrong for anything with a
+                // PSID header in front of it.
+                Button("Play as SID…") { run { model.beginPlay(manual: false) } }
+                Button("Play as SID, Entering Addresses…") { run { model.beginPlay(manual: true) } }
                 Divider()
             }
 

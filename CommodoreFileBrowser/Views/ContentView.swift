@@ -32,6 +32,9 @@ struct ContentView: View {
                     .padding(.bottom, contentPadding)
 
                 FunctionBar(palette: palette, keys: functionKeys)
+                    // The bar sits behind whatever is modal and so is already
+                    // out of reach; this says so rather than relying on it.
+                    .disabled(model.isPresentingModal)
             }
         }
         .ignoresSafeArea()

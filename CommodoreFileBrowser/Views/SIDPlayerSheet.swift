@@ -143,7 +143,11 @@ struct SIDPlayerSheet: View {
         if let tune = request.detected {
             parts.append("from the \(tune.source.rawValue)")
             if let author = tune.author { parts.append(author) }
-            if tune.songCount > 1 { parts.append("\(tune.songCount) songs") }
+            switch tune.songCount {
+            case nil: parts.append("multiple songs")
+            case let count? where count > 1: parts.append("\(count) songs")
+            default: break
+            }
             parts.append(contentsOf: extent(load: tune.loadAddress, bytes: tune.payload.count))
         } else {
             // Kept short: the extent that follows is the useful part, and the

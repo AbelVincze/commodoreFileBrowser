@@ -411,8 +411,7 @@ do {
             let url = URL(fileURLWithPath: "\(floppies)/\(name)")
             let image: ADFImage
             do { image = try ADFImage(url: url) } catch {
-                let why = (error as? LocalizedError)?.errorDescription ?? ""
-                if why.contains("no AmigaDOS") { loaders += 1 } else { failures += 1 }
+                if case DiskImageError.noFileSystem = error { loaders += 1 } else { failures += 1 }
                 continue
             }
             volumes += 1
@@ -1113,7 +1112,9 @@ do {
             check(tune.source == .psid, "parsed from the header")
             check(tune.initAddress != 0, String(format: "init $%04X, play $%04X, load $%04X",
                                                 tune.initAddress, tune.playAddress, tune.loadAddress))
-            check(tune.songCount >= 1, "\(tune.songCount) song(s), title \"\(tune.title)\"")
+            check((tune.songCount ?? 0) >= 1,
+                  "\(tune.songCount.map(String.init) ?? "an unknown number of") song(s), "
+                  + "title \"\(tune.title)\"")
             check(!tune.payload.isEmpty, "\(tune.payload.count) bytes of payload")
         } else { check(false, "PSID did not parse") }
     } else { print("      (no .sid files found to test)") }

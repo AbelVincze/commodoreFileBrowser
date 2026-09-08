@@ -202,6 +202,10 @@ final class SettingsStore: ObservableObject {
     @Published var showHiddenFiles: Bool { didSet { save() } }
     /// Deleting host files puts them in the Trash rather than erasing them.
     @Published var deleteToTrash: Bool { didSet { save() } }
+    /// Copying out of a Commodore image adds the file type as an extension.
+    /// Remembered from the copy sheet, since it is a habit rather than a
+    /// per-file decision.
+    @Published var addHostExtension: Bool { didSet { save() } }
     /// Where the divider between the two panels sits, as a fraction of the width.
     @Published var splitFraction: Double { didSet { save() } }
     /// Bitmap viewer display preferences. The block geometry is inferred per
@@ -231,6 +235,7 @@ final class SettingsStore: ObservableObject {
         var font: PETSCIIFont?
         var showHiddenFiles: Bool
         var deleteToTrash: Bool?
+        var addHostExtension: Bool?
         var splitFraction: Double?
         var bitmapMagnification: Int?
         var bitmapInvert: Bool?
@@ -258,6 +263,7 @@ final class SettingsStore: ObservableObject {
         font = stored?.font ?? PETSCIIFont(rom: .c64, set: stored?.charSet ?? .uppercase)
         showHiddenFiles = stored?.showHiddenFiles ?? false
         deleteToTrash = stored?.deleteToTrash ?? true
+        addHostExtension = stored?.addHostExtension ?? true
         splitFraction = stored?.splitFraction ?? 0.5
         bitmapMagnification = stored?.bitmapMagnification ?? 2
         bitmapInvert = stored?.bitmapInvert ?? false
@@ -277,7 +283,8 @@ final class SettingsStore: ObservableObject {
         guard !loading else { return }
         let stored = Stored(appearance: appearance, light: light, dark: dark,
                             charSet: nil, font: font, showHiddenFiles: showHiddenFiles,
-                            deleteToTrash: deleteToTrash, splitFraction: splitFraction,
+                            deleteToTrash: deleteToTrash, addHostExtension: addHostExtension,
+                            splitFraction: splitFraction,
                             bitmapMagnification: bitmapMagnification, bitmapInvert: bitmapInvert,
                             viewerUsesC64Offsets: viewerUsesC64Offsets,
                             sidModel: sidModel, scopeEnabled: scopeEnabled, scopeMode: scopeMode,

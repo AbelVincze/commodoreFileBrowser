@@ -70,9 +70,30 @@ struct TransferSheet: View {
                 }
                 Toggle("Overwrite files that already exist", isOn: $plan.overwrite)
                     .font(.system(size: 11))
+                if plan.canAddHostExtension {
+                    Toggle(extensionLabel, isOn: $plan.addsHostExtension)
+                        .font(.system(size: 11))
+                        .onChange(of: plan.addsHostExtension) { _, adds in
+                            // The field follows the checkbox: the name in it is
+                            // the one that will be written, so leaving a stale
+                            // spelling there would say the opposite.
+                            plan.targetName = adds ? plan.nameWithExtension
+                                                   : plan.nameWithoutExtension
+                        }
+                }
             }
         }
         .onAppear { focused = true }
+    }
+
+    /// Names the extension itself when there is one file and so one answer;
+    /// stays general when a whole selection is going out at once.
+    private var extensionLabel: String {
+        let suffix = (plan.nameWithExtension as NSString).pathExtension
+        guard plan.items.count == 1, !suffix.isEmpty else {
+            return "Add the Commodore file type as an extension"
+        }
+        return "Add the Commodore file type as an extension (.\(suffix))"
     }
 }
 

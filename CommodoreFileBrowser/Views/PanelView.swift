@@ -235,7 +235,7 @@ struct PanelView: View {
                     .foregroundStyle(palette.color(.accent))
             }
         }
-        .font(.system(size: 10, design: .monospaced))
+        .font(.system(size: 10))
         .foregroundStyle(palette.color(.dim))
         .padding(.horizontal, inset)
         .frame(height: 24)
@@ -277,7 +277,12 @@ struct PanelRow: View {
     /// One trailing column of a row drawn as text.
     private func column(_ text: String, width: CGFloat? = nil, minWidth: CGFloat? = nil) -> some View {
         Text(text)
-            .font(.system(size: 10, design: .monospaced))
+            // The face and the size the names are set in, so the row reads as
+            // one line rather than two. Only the digits are held to an even
+            // width: the columns are right aligned, and proportional figures
+            // would shuffle them sideways as the listing scrolls past.
+            .font(.system(size: 12))
+            .monospacedDigit()
             .lineLimit(1)
             .foregroundStyle(isCursor && isActive ? palette.color(.cursorText).opacity(0.8)
                                                   : palette.color(.dim))
@@ -327,9 +332,9 @@ struct PanelRow: View {
                 // as three ragged edges. The size is only a floor: a file big
                 // enough to need more room takes it from the name, which is the
                 // one field here that can be shortened without losing meaning.
-                column(item.detail, minWidth: 62)
-                if !item.flags.isEmpty { column(item.flags, width: 52) }
-                if let modified = item.modified { column(Self.dateText(modified), width: 58) }
+                column(item.detail, minWidth: 74)
+                if !item.flags.isEmpty { column(item.flags, width: 62) }
+                if let modified = item.modified { column(Self.dateText(modified), width: 68) }
             }
         }
         .padding(.horizontal, PanelLayout.inset)

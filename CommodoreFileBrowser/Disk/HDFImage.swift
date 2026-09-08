@@ -303,6 +303,7 @@ final class HDFImage: DiskImage {
 
     /// A partition table is not a directory to rearrange, and a hash table has
     /// no order to rearrange either.
+    var supportsEntryReordering: Bool { false }
     func moveEntry(_ entry: ImageEntry, by offset: Int) throws { throw DiskImageError.unsupportedFormat }
     func addDecorativeEntry(name: [UInt8], after entry: ImageEntry?) throws {
         throw DiskImageError.unsupportedFormat

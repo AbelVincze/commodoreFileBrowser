@@ -61,9 +61,15 @@ struct ImageEntry: Identifiable, Hashable {
     /// A name the file system will take, for copying the entry out or handing
     /// it to another application. A Commodore name gains the type as its
     /// extension, which is the only place that information can survive.
-    var hostFileName: String {
+    var hostFileName: String { hostFileName(addingExtension: true) }
+
+    /// The same, with the extension made optional: a copy out of an image can
+    /// be asked for under the plain Commodore name. An Amiga name has no type
+    /// to carry, so the flag makes no difference to it.
+    func hostFileName(addingExtension: Bool) -> String {
         switch encoding {
-        case .petscii: return PETSCII.hostFileName(name, type: type)
+        case .petscii: return PETSCII.hostFileName(name, type: type,
+                                                   addingExtension: addingExtension)
         case .latin1:
             var out = displayName
                 .replacingOccurrences(of: "/", with: "-")
@@ -78,6 +84,7 @@ struct ImageEntry: Identifiable, Hashable {
 enum DiskImageError: LocalizedError {
     case unsupportedFormat
     case corrupt(String)
+    case noFileSystem
     case diskFull
     case directoryFull
     case readOnly
@@ -89,6 +96,7 @@ enum DiskImageError: LocalizedError {
         switch self {
         case .unsupportedFormat: return "Unsupported or damaged image format."
         case .corrupt(let why): return "The image is damaged: \(why)"
+        case .noFileSystem: return "No AmigaDOS file system on disk."
         case .diskFull: return "Not enough free blocks on the image."
         case .directoryFull: return "The directory of this image is full."
         case .readOnly: return "This image cannot be written to."
@@ -139,6 +147,7 @@ protocol DiskImage: AnyObject {
     var usableBytesPerBlock: Int { get }
     var freeDescription: String { get }
     var supportsDirectories: Bool { get }
+    var supportsEntryReordering: Bool { get }
 
     func entries(at path: [String]) throws -> [ImageEntry]
     func read(_ entry: ImageEntry, at path: [String]) throws -> Data
@@ -161,6 +170,10 @@ extension DiskImage {
     /// Free space as the panel footer says it.
     var freeDescription: String { "\(blocksFree) blocks free" }
     var supportsDirectories: Bool { false }
+    /// A Commodore directory is a list in a fixed order, so its rows can be
+    /// swapped. A hash table is not, and says so here rather than letting the
+    /// menu offer a move it can only refuse.
+    var supportsEntryReordering: Bool { true }
 
     /// `path` is the directory inside the image, empty for its root. A format
     /// without directories only ever sees the root and can ignore it.

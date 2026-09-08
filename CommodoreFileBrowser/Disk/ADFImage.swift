@@ -157,6 +157,7 @@ final class ADFImage: DiskImage {
 
     /// A hash table has no order to rearrange, and a directory has no room for
     /// a row that is not an entry.
+    var supportsEntryReordering: Bool { false }
     func moveEntry(_ entry: ImageEntry, by offset: Int) throws { throw DiskImageError.unsupportedFormat }
     func addDecorativeEntry(name: [UInt8], after entry: ImageEntry?) throws {
         throw DiskImageError.unsupportedFormat

@@ -20,7 +20,31 @@ struct ILBMImage {
     var heightScale: CGFloat
     /// For the viewer's subtitle: "6 planes · EHB · 64 colours".
     var mode: String
-    var image: NSImage
+    /// Kept as a `CGImage`: the viewer wraps it for SwiftUI, the thumbnail
+    /// extension draws it into the context Quick Look hands over, and neither
+    /// wants the other's wrapper.
+    var image: CGImage
+
+    /// How large to draw the picture inside `box`, aspect corrected.
+    ///
+    /// Shrinking is free, but growing goes in whole steps: a picture drawn a
+    /// pixel at a time looks wrong at 1.37 times, where some rows are two
+    /// screen pixels tall and their neighbours three. A 320x200 lores picture
+    /// comes out at 2x or 3x rather than at whatever happened to fit.
+    func displaySize(within box: CGSize) -> CGSize {
+        Self.displaySize(width: width, height: height, heightScale: heightScale, within: box)
+    }
+
+    static func displaySize(width: Int, height: Int,
+                            heightScale: CGFloat, within box: CGSize) -> CGSize {
+        let wide = CGFloat(width)
+        let tall = CGFloat(height) * heightScale
+        guard wide > 0, tall > 0 else { return box }
+        let fit = min(box.width / wide, box.height / tall)
+        let scale = fit >= 1 ? floor(fit) : fit
+        return CGSize(width: max(1, (wide * scale).rounded()),
+                      height: max(1, (tall * scale).rounded()))
+    }
 }
 
 enum ILBMDecoder {
@@ -82,7 +106,7 @@ enum ILBMDecoder {
 
         var palette = colours(bytes, IFF.chunk("CMAP", in: form.chunks), planes: head.planes)
         let camg = IFF.chunk("CAMG", in: form.chunks)
-            .map { AmigaVolume.long(bytes, $0.range.lowerBound) } ?? 0
+            .map { IFF.long(bytes, $0.range.lowerBound) } ?? 0
 
         // An Extra Half-Brite file with no CAMG in it is common enough to be
         // worth recognising by shape: six planes needs 64 entries, and a

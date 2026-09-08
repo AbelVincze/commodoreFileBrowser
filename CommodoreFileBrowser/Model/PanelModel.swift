@@ -3,6 +3,14 @@ import UniformTypeIdentifiers
 
 enum PanelSide: String, Codable { case left, right }
 
+/// Where a drop hovering over a panel would land, so it can be drawn before
+/// the mouse is let go. `panel` is the folder the listing is showing; `row` is
+/// a folder inside it that the pointer is over.
+enum DropHighlight: Equatable {
+    case panel
+    case row(Int)
+}
+
 /// What a panel is currently showing.
 enum PanelLocation: Codable, Equatable, Hashable {
     case volumes
@@ -68,6 +76,8 @@ final class PanelModel: ObservableObject {
     @Published var cursor: Int = 0
     @Published var marked: Set<Int> = []
     @Published var loadError: String?
+    /// Where a drag hovering over this panel would land, drawn while it does.
+    @Published var dropHighlight: DropHighlight?
 
     /// Reveal hidden files. Mirrored from the theme store.
     var showHidden = false

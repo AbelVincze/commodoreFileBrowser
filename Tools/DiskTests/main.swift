@@ -1937,9 +1937,8 @@ do {
         return [UInt8]("FORM".utf8) + be32(payload.count) + payload
     }
 
-    func pixel(_ image: NSImage, _ x: Int, _ y: Int) -> (Int, Int, Int)? {
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
-              let c = rep.colorAt(x: x, y: y) else { return nil }
+    func pixel(_ image: CGImage, _ x: Int, _ y: Int) -> (Int, Int, Int)? {
+        guard let c = NSBitmapImageRep(cgImage: image).colorAt(x: x, y: y) else { return nil }
         return (Int(c.redComponent * 255 + 0.5),
                 Int(c.greenComponent * 255 + 0.5),
                 Int(c.blueComponent * 255 + 0.5))
@@ -2025,6 +2024,27 @@ do {
                                                   palette: dim, body: flat))
         check(near(pixel(picture.image, 0, 0), (0xFF, 0x88, 0x00)), "a four bit palette is widened, not halved")
     } catch { check(false, "OCS palette: \(error)") }
+
+    // How big a preview draws a picture. Shrinking is free; growing goes in
+    // whole steps, or some rows of a pixel-drawn picture come out two screen
+    // pixels tall and their neighbours three.
+    do {
+        let box = CGSize(width: 720, height: 520)
+        // A lores 320x200 at 10:11 is 320x220 true to shape, so it doubles.
+        let lores = ILBMImage.displaySize(width: 320, height: 200, heightScale: 1.1, within: box)
+        check(lores == CGSize(width: 640, height: 440), "320x200 lores is drawn at \(lores)")
+        // Hires 640x200 has half-width pixels: 640x440, which already fits.
+        let hires = ILBMImage.displaySize(width: 640, height: 200, heightScale: 2.2, within: box)
+        check(hires == CGSize(width: 640, height: 440), "640x200 hires is drawn at \(hires)")
+        // Bigger than the box shrinks to fit, whole steps or not.
+        let big = ILBMImage.displaySize(width: 1440, height: 1024, heightScale: 1, within: box)
+        check(big.width <= box.width && big.height <= box.height && big.width == 720,
+              "a 1440x1024 picture is shrunk to \(big)")
+        // A tiny brush grows a long way, but still by a whole number.
+        let brush = ILBMImage.displaySize(width: 28, height: 17, heightScale: 1, within: box)
+        check(brush.width.truncatingRemainder(dividingBy: 28) == 0,
+              "a 28x17 brush grows by a whole number to \(brush)")
+    }
 
     // Nonsense must be refused rather than drawn.
     check(IFFLoader.detect([UInt8]("FORM".utf8) + [0, 0, 0, 4] + [UInt8]("JUNK".utf8)) == nil,
@@ -2203,6 +2223,431 @@ do {
     }
 } catch {
     print("  FAIL 8SVX: \(error)"); failures += 1
+}
+
+// --- BAM repair -------------------------------------------------------------
+print("\n=== BAM repair")
+do {
+    // A 35 track D64, so every offset here is computed the way the drive would.
+    func at(_ t: Int, _ s: Int) -> Int {
+        var base = 0
+        for tt in 1..<t { base += CBMDiskImage.sectorsPerTrack(tt, format: .d64(tracks: 35)) }
+        return (base + s) * 256
+    }
+    /// Flips one bit of the BAM in a raw image, keeping that track's free count
+    /// in step — the same invariant the drive keeps.
+    func setFree(_ d: inout Data, _ t: Int, _ s: Int, _ free: Bool) {
+        let group = at(18, 0) + 4 * t
+        let idx = group + 1 + s / 8
+        let mask = UInt8(1 << (s % 8))
+        let wasFree = d[idx] & mask != 0
+        if free, !wasFree { d[idx] |= mask; d[group] += 1 }
+        if !free, wasFree { d[idx] &= ~mask; d[group] -= 1 }
+    }
+    /// Writes a directory entry by hand into slot `i` of the first directory
+    /// sector, which is how a disk with two entries pointing at one file is
+    /// made — nothing in the browser will produce one.
+    func putEntry(_ d: inout Data, slot i: Int, type: UInt8, name: String, t: UInt8, s: UInt8, blocks: Int) {
+        let e = at(18, 1) + i * 32
+        for j in 2..<32 { d[e + j] = 0 }
+        d[e + 2] = type; d[e + 3] = t; d[e + 4] = s
+        let padded = PETSCII.padded16(PETSCII.petscii(fromASCII: name))
+        for j in 0..<16 { d[e + 5 + j] = padded[j] }
+        d[e + 30] = UInt8(blocks & 0xFF); d[e + 31] = UInt8((blocks >> 8) & 0xFF)
+    }
+    func blank(_ path: String, _ files: [(String, Int)]) throws -> URL {
+        try? FileManager.default.removeItem(atPath: path)
+        let url = URL(fileURLWithPath: path)
+        try CBMDiskImage.createBlank(.d64, name: PETSCII.petscii(fromASCII: "repair"),
+                                     id: PETSCII.petscii(fromASCII: "01"), at: url)
+        let img = try CBMDiskImage(url: url)
+        for (name, size) in files {
+            try img.write(name: PETSCII.petscii(fromASCII: name), type: .prg,
+                          data: Data(repeating: 0x41, count: size), at: [])
+        }
+        try img.save()
+        return url
+    }
+
+    // A disk damaged three ways at once, each of which a repair must find.
+    do {
+        let url = try blank("\(scratch)/repair1.d64", [("one", 600), ("two", 100)])
+        let before = try CBMDiskImage(url: url)
+        check(before.integrityNote == nil, "a freshly written disk has nothing wrong with it")
+        let firstTrack = Int(before.entries[0].startTrack), firstSector = Int(before.entries[0].startSector)
+        let trueFree = before.blocksFree
+        let trueBlocks = before.entries[0].blocks
+        let originals = try before.entries.map { try before.read($0) }
+
+        var raw = try Data(contentsOf: url)
+        setFree(&raw, 20, 5, false)                 // allocated, used by nothing
+        setFree(&raw, firstTrack, firstSector, true) // in use, marked free
+        let entry = at(18, 1)
+        raw[entry + 30] = 99; raw[entry + 31] = 0    // a block count that is a lie
+        try raw.write(to: url)
+
+        let img = try CBMDiskImage(url: url)
+        check(img.integrityNote != nil, "the damage shows in the header: \(img.integrityNote ?? "-")")
+        let plan = img.analyseForRepair()
+        check(plan.canRepair, "a disk with only BAM damage can be repaired")
+        check(plan.toFree == 1, "\(plan.toFree) sector allocated and unused")
+        check(plan.toAllocate == 1, "\(plan.toAllocate) sector in use and marked free")
+        check(plan.wrongCounts.count == 1 && plan.wrongCounts[0].statedBlocks == 99
+              && plan.wrongCounts[0].actualBlocks == trueBlocks,
+              "the block count is caught: says 99, is \(plan.wrongCounts.first?.actualBlocks ?? -1)")
+        check(plan.blocksFreeAfter == trueFree, "and it works out \(plan.blocksFreeAfter) blocks free")
+
+        try img.applyRepair()
+        check(img.integrityNote == nil, "after repair the BAM agrees with the directory")
+        check(img.blocksFree == trueFree, "\(img.blocksFree) blocks free, as before the damage")
+        check(img.entries[0].blocks == trueBlocks, "the block count is put right")
+        let after = try img.entries.map { try img.read($0) }
+        check(after == originals, "and both files still read back byte for byte")
+        check(img.hasUnsavedChanges, "the repair is held in memory until it is saved")
+    }
+
+    // An unclosed file pointing into a live one: what a drive leaves behind,
+    // and the reason most real disks look unrepairable until it is handled.
+    do {
+        let url = try blank("\(scratch)/repair2.d64", [("good", 600)])
+        let before = try CBMDiskImage(url: url)
+        let good = try before.read(before.entries[0])
+        var raw = try Data(contentsOf: url)
+        putEntry(&raw, slot: 1, type: 0x02, name: "splat",           // no closed bit
+                 t: before.entries[0].startTrack, s: before.entries[0].startSector, blocks: 0)
+        try raw.write(to: url)
+
+        let img = try CBMDiskImage(url: url)
+        check(img.entries.count == 2, "the disk lists the unclosed file")
+        let plan = img.analyseForRepair()
+        check(plan.splatToScratch.count == 1, "the unclosed file is listed for scratching")
+        check(plan.collisions.isEmpty && plan.canRepair,
+              "and setting it aside first leaves nothing sharing a sector")
+        try img.applyRepair()
+        check(img.entries.count == 1, "it is gone after the repair")
+        check((try? img.read(img.entries[0])) == good, "and the file it pointed into is untouched")
+        check(img.integrityNote == nil, "with a BAM that agrees")
+    }
+
+    // Two closed files pointing at one chain. Nothing may be written.
+    do {
+        let url = try blank("\(scratch)/repair3.d64", [("one", 600)])
+        let before = try CBMDiskImage(url: url)
+        var raw = try Data(contentsOf: url)
+        putEntry(&raw, slot: 1, type: 0x82, name: "two",
+                 t: before.entries[0].startTrack, s: before.entries[0].startSector, blocks: 3)
+        try raw.write(to: url)
+        let bytesBefore = try Data(contentsOf: url)
+
+        let img = try CBMDiskImage(url: url)
+        let plan = img.analyseForRepair()
+        check(!plan.canRepair, "two files sharing a chain cannot be repaired")
+        check(plan.collisions.count > 0 && plan.collisions[0].claimedBy.count == 2,
+              "and the report names both: \(plan.collisions.first?.claimedBy ?? [])")
+        var threw = false
+        do { try img.applyRepair() } catch { threw = true }
+        check(threw, "repairing it is refused")
+        check(!img.hasUnsavedChanges, "nothing was changed in memory")
+        check((try? Data(contentsOf: url)) == bytesBefore, "and nothing on disk either")
+    }
+
+    // A chain that walks off the end of the disk.
+    do {
+        let url = try blank("\(scratch)/repair4.d64", [("one", 600)])
+        let before = try CBMDiskImage(url: url)
+        var raw = try Data(contentsOf: url)
+        raw[at(Int(before.entries[0].startTrack), Int(before.entries[0].startSector))] = 40
+        try raw.write(to: url)
+        let img = try CBMDiskImage(url: url)
+        let plan = img.analyseForRepair()
+        check(!plan.canRepair && plan.brokenChains.count == 1,
+              "a chain leaving the disk cannot be repaired")
+    }
+
+    // The repo's own mismatching disk: hand made directory art, ten entries all
+    // pointing at the same sector on the directory track.
+    if let img = try? CBMDiskImage(url: URL(fileURLWithPath: "sample_images/o-tech-people.d64")) {
+        check(img.integrityNote != nil, "o-tech-people.d64 still reports a mismatch")
+        let plan = img.analyseForRepair()
+        check(true, "and it surveys without complaint: "
+              + "\(plan.filesChecked) files, \(plan.collisions.count) shared sectors, "
+              + "\(plan.canRepair ? "repairable" : "not repairable")")
+    }
+
+    // A track whose free count is nonsense. The map can be perfectly good and
+    // the disk still report more blocks free than it physically holds, because
+    // the header's mismatch check compares which blocks are allocated and not
+    // how many each track claims.
+    do {
+        let url = try blank("\(scratch)/repair5.d64", [("one", 600)])
+        let trueFree = try CBMDiskImage(url: url).blocksFree
+        var raw = try Data(contentsOf: url)
+        raw[at(18, 0) + 4 * 3] = 193        // track 3 holds 21 sectors
+        raw[at(18, 0) + 4 * 5] = 202
+        try raw.write(to: url)
+
+        let img = try CBMDiskImage(url: url)
+        check(img.blocksFree > 664, "the damaged disk claims \(img.blocksFree) blocks free")
+        check(img.integrityNote == nil, "and the map itself is fine, so the header says nothing")
+        let plan = img.analyseForRepair()
+        check(plan.badFreeCounts == 2, "the survey finds \(plan.badFreeCounts) tracks miscounting")
+        check(!plan.isClean, "so the disk is not called clean")
+        try img.applyRepair()
+        check(img.blocksFree == trueFree,
+              "after repair it is back to \(img.blocksFree) blocks free (want \(trueFree))")
+    }
+
+    // The disk that found the bug above: a good map, but 27 tracks counting
+    // free sectors they do not have, adding up to 3106 free on a disk that
+    // holds 664. Named rather than left to the sweep because it is the case
+    // that showed a repair could report success and leave nonsense behind.
+    for place in ["~/Emulation/c64/disks/macc/MACDISKS/MMUSIC00.D64",
+                  "~/Emulation/c64/SD_backup/macc/maccdisks/MMUSIC00.D64"] {
+        let path = NSString(string: place).expandingTildeInPath
+        guard let source = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+            print("  --   MMUSIC00.D64 is not on this machine, skipping")
+            continue
+        }
+        let copy = URL(fileURLWithPath: "\(scratch)/mmusic00.d64")
+        try source.write(to: copy)
+        let img = try CBMDiskImage(url: copy)
+        let claimed = img.blocksFree
+        let plan = img.analyseForRepair()
+        // Tolerant of its own subject: this disk can be repaired and saved from
+        // the app, and a check that needs a file to stay broken is a check that
+        // will one day fail for the right reason. The synthetic case above is
+        // what actually holds the line.
+        guard claimed > 664 else {
+            print("  --   MMUSIC00.D64 has been repaired since (\(claimed) blocks free), "
+                  + "so there is nothing left to catch here")
+            continue
+        }
+        check(plan.badFreeCounts > 0, "MMUSIC00.D64 claims \(claimed) blocks free on a 664 "
+              + "block disk, with \(plan.badFreeCounts) tracks miscounting")
+        try img.applyRepair()
+        check(img.blocksFree <= 664 && img.blocksFree == plan.blocksFreeAfter,
+              "after repair: \(img.blocksFree) blocks free, as the report promised")
+        check(img.integrityNote == nil, "and a BAM that agrees with the directory")
+    }
+
+    // Then every real disk on this machine. The survey must never throw, and a
+    // disk it calls repairable must actually come out clean.
+    var places = ["sample_images"]
+    for extra in ["~/Emulation/c64/SD_backup/macc/maccdisks", "~/Emulation/c64/SD_backup/macc/music"] {
+        places.append(NSString(string: extra).expandingTildeInPath)
+    }
+    var seen = 0, repairable = 0, refused = 0, cleaned = 0, broke = 0
+    var reasons: [String] = []
+    for place in places {
+        guard let walk = FileManager.default.enumerator(atPath: place) else { continue }
+        for case let rel as String in walk where rel.lowercased().hasSuffix(".d64") {
+            guard let source = try? Data(contentsOf: URL(fileURLWithPath: "\(place)/\(rel)")) else { continue }
+            let copy = URL(fileURLWithPath: "\(scratch)/sweep.d64")
+            try? source.write(to: copy)
+            guard let img = try? CBMDiskImage(url: copy) else { continue }
+            seen += 1
+            let plan = img.analyseForRepair()
+            guard plan.canRepair else { refused += 1; continue }
+            repairable += 1
+            let lengths = img.entries.filter { $0.type != .del }.map { (try? img.read($0))?.count ?? -1 }
+            guard (try? img.applyRepair()) != nil else {
+                broke += 1; reasons.append("\(rel): applyRepair threw"); continue
+            }
+            if let note = img.integrityNote {
+                broke += 1; reasons.append("\(rel): still \(note)"); continue
+            }
+            // The report promised a figure; the disk has to agree with it.
+            if img.blocksFree != plan.blocksFreeAfter {
+                broke += 1
+                reasons.append("\(rel): says \(img.blocksFree) free, report promised \(plan.blocksFreeAfter)")
+                continue
+            }
+            if img.analyseForRepair().isClean == false {
+                broke += 1; reasons.append("\(rel): a second repair still finds work"); continue
+            }
+            let after = img.entries.filter { $0.type != .del }.map { (try? img.read($0))?.count ?? -1 }
+            // Scratching the unclosed files shortens the list, so compare what
+            // survived rather than the whole of it.
+            if after.count == lengths.count, after != lengths {
+                broke += 1; reasons.append("\(rel): a file changed length"); continue
+            }
+            cleaned += 1
+        }
+    }
+    check(seen > 0, "\(seen) real D64 images surveyed")
+    check(broke == 0, "\(cleaned) of \(repairable) repairable disks came out clean"
+          + (reasons.isEmpty ? "" : " - \(reasons.prefix(4))"))
+    print("      \(refused) refused as beyond repair, \(repairable) repairable")
+} catch {
+    print("  FAIL BAM repair: \(error)"); failures += 1
+}
+
+// MARK: - Drag and drop
+
+// The rules a drop is decided by, and the transfer it ends in. The pointer
+// itself cannot be driven from here, so what is checked is everything behind
+// it: which of move and copy two places imply, which drops are refused, and
+// that the files land where they were dropped.
+print("\n=== drag and drop")
+do {
+    let fm = FileManager.default
+    let root = URL(fileURLWithPath: scratch)
+        .appendingPathComponent("cfb-drag-\(UUID().uuidString)", isDirectory: true)
+    let dirA = root.appendingPathComponent("A", isDirectory: true)
+    let dirB = root.appendingPathComponent("B", isDirectory: true)
+    let dirC = root.appendingPathComponent("C", isDirectory: true)
+    let dirD = root.appendingPathComponent("D", isDirectory: true)
+    let nested = dirA.appendingPathComponent("sub", isDirectory: true)
+    for dir in [nested, dirB, dirC, dirD] {
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+    defer { try? fm.removeItem(at: root) }
+
+    @discardableResult
+    func put(_ name: String, _ text: String, in folder: URL) throws -> URL {
+        let url = folder.appendingPathComponent(name)
+        try Data(text.utf8).write(to: url)
+        return url
+    }
+    let hello = try put("HELLO.PRG", "\u{01}\u{08}hello world", in: dirA)
+    try put("second.txt", "second", in: dirA)
+    try put("deep.txt", "deep", in: nested)
+
+    let imageURL = root.appendingPathComponent("drag.d64")
+    try CBMDiskImage.createBlank(.d64, tracks: 35,
+                                 name: PETSCII.cbmName(fromASCII: "DRAG"),
+                                 id: PETSCII.petscii(fromASCII: "01"), at: imageURL)
+
+    let settings = SettingsStore()
+    let model = AppModel(settings: settings)
+    model.left.navigate(to: .directory(dirA))
+    model.right.navigate(to: .directory(dirB))
+    func row(_ panel: PanelModel, _ name: String) -> PanelItem? {
+        panel.items.first { $0.title == name }
+    }
+
+    // Which volume a place belongs to, which is the whole of the question.
+    let volumeA = PanelDropDelegate.volumeIdentity(of: .directory(dirA))
+    check(volumeA == PanelDropDelegate.volumeIdentity(of: .directory(dirB)),
+          "two folders on one volume share an identity")
+    check(PanelDropDelegate.volumeIdentity(of: .image(imageURL)) != volumeA,
+          "the inside of an image is a volume of its own")
+    check(PanelDropDelegate.volumeIdentity(of: .volumes) == nil, "the volume list is nowhere")
+
+    let fileSource = DropSource(location: .directory(dirA), urls: [hello], hasFolder: false)
+    let folderSource = DropSource(location: .directory(root), urls: [dirA], hasFolder: true)
+    func plan(_ source: DropSource, _ destination: PanelLocation, option: Bool = false) -> DropPlan? {
+        PanelDropDelegate.plan(dropping: source, onto: destination,
+                               highlight: .panel, optionHeld: option)
+    }
+
+    check(plan(fileSource, .directory(dirB))?.isMove == true, "same volume moves by default")
+    check(plan(fileSource, .directory(dirB), option: true)?.isMove == false,
+          "and Option turns that into a copy")
+    check(plan(fileSource, .image(imageURL))?.isMove == false, "into an image copies by default")
+    check(plan(fileSource, .image(imageURL), option: true)?.isMove == true,
+          "and Option turns that into a move")
+    check(plan(DropSource(location: .image(imageURL)), .directory(dirB))?.isMove == false,
+          "out of an image copies by default")
+    check(plan(DropSource(location: .image(imageURL)), .image(imageURL, path: ["sub"]))?.isMove == true,
+          "one image into a folder of its own moves")
+
+    check(plan(fileSource, .directory(dirA)) == nil, "dropping where the files already are is refused")
+    check(plan(folderSource, .directory(nested)) == nil, "a folder cannot be dropped inside itself")
+    check(plan(folderSource, .image(imageURL)) == nil, "a folder cannot be dropped into an image")
+
+    // Between two folders, which the file system itself carries.
+    model.performDrop(items: [row(model.left, "HELLO.PRG")!], from: .left, to: .right,
+                      destination: .directory(dirB), isMove: false)
+    check(fm.fileExists(atPath: dirB.appendingPathComponent("HELLO.PRG").path)
+          && fm.fileExists(atPath: hello.path), "a copy between two folders leaves the original")
+    model.performDrop(items: [row(model.left, "second.txt")!], from: .left, to: .right,
+                      destination: .directory(dirB), isMove: true)
+    check(fm.fileExists(atPath: dirB.appendingPathComponent("second.txt").path)
+          && !fm.fileExists(atPath: dirA.appendingPathComponent("second.txt").path),
+          "a move between two folders leaves nothing behind")
+    model.performDrop(items: [row(model.left, "sub")!], from: .left, to: .right,
+                      destination: .directory(dirB), isMove: false)
+    check(fm.fileExists(atPath: dirB.appendingPathComponent("sub/deep.txt").path),
+          "a folder arrives with what is inside it")
+
+    // Into an image and back out, where the bytes are rewritten on the way.
+    model.right.navigate(to: .image(imageURL))
+    model.performDrop(items: [row(model.left, "HELLO.PRG")!], from: .left, to: .right,
+                      destination: .image(imageURL), isMove: false)
+    check(model.right.image?.entries.contains { $0.displayName == "HELLO" } == true,
+          "a file dropped into an image is written as HELLO")
+    check(fm.fileExists(atPath: hello.path), "and is still on the Mac")
+
+    settings.addHostExtension = true
+    model.performDrop(items: [row(model.right, "HELLO")!], from: .right, to: .left,
+                      destination: .directory(dirC), isMove: false)
+    check(fm.fileExists(atPath: dirC.appendingPathComponent("HELLO.prg").path),
+          "and comes back out as HELLO.prg")
+
+    // A name already taken on the far side is left alone: a drag asks no
+    // questions, so it may not answer this one either.
+    model.performDrop(items: [row(model.right, "HELLO")!], from: .right, to: .left,
+                      destination: .directory(dirC), isMove: true)
+    check(model.right.image?.entries.contains { $0.displayName == "HELLO" } == true
+          && model.statusMessage.contains("skipped"),
+          "a name already taken skips the move: \(model.statusMessage)")
+
+    let free = model.right.image!.blocksFree
+    model.performDrop(items: [row(model.right, "HELLO")!], from: .right, to: .left,
+                      destination: .directory(dirD), isMove: true)
+    check(fm.fileExists(atPath: dirD.appendingPathComponent("HELLO.prg").path),
+          "a move out of an image lands on the Mac")
+    check(model.right.image?.entries.contains { $0.displayName == "HELLO" } == false
+          && model.right.image!.blocksFree > free,
+          "and scratches the entry, giving the blocks back")
+
+    // A path dropped in from another application, which has no panel behind it.
+    let outside = try put("OUTSIDE.PRG", "\u{01}\u{08}from the finder", in: dirC)
+    check(PanelDropDelegate.item(for: outside, id: 0).kind == .file
+          && PanelDropDelegate.item(for: dirC, id: 0).kind == .folder
+          && PanelDropDelegate.item(for: imageURL, id: 0).kind == .diskImage,
+          "a dropped path becomes a row of the right kind")
+    model.performDrop(items: [PanelDropDelegate.item(for: outside, id: 0)], from: nil, to: .right,
+                      destination: .image(imageURL), isMove: false)
+    check(model.right.image?.entries.contains { $0.displayName == "OUTSIDE" } == true,
+          "a file dropped in from outside reaches the image")
+
+    // A drag that is over leaves its files on the drag pasteboard, and SwiftUI
+    // asks a drop target one more time after the mouse is up. Answering that
+    // from the finished drag is what used to leave a panel outlined with
+    // nothing over it, so the pasteboard is retired when the drag ends.
+    let dragBoard = NSPasteboard(name: .drag)
+    dragBoard.clearContents()
+    dragBoard.writeObjects([outside as NSURL])
+    let coordinator = model.dragCoordinator
+    check(coordinator.externalURLs() == [outside], "a drag in flight reads its files off the pasteboard")
+    coordinator.retireDrag()
+    check(coordinator.externalURLs().isEmpty, "and reads nothing off it once the drag is over")
+    check(PanelDropDelegate(model: model, panel: model.right, row: nil).plan() == nil,
+          "so a drop target asked again after the drop offers nothing")
+
+    // A move made by another application happens after the drag has already
+    // ended, so the files are still there when the session reports finished.
+    // The panel follows the ones it let go of until one of them disappears.
+    let goodbye = try put("goodbye.txt", "bye", in: dirD)
+    model.left.navigate(to: .directory(dirD))
+    check(model.left.items.contains { $0.title == "goodbye.txt" }, "the panel lists a file it is about to lose")
+    coordinator.watchForDeparture(of: [goodbye])
+    try fm.removeItem(at: goodbye)
+    let until = Date().addingTimeInterval(2)
+    while Date() < until, model.left.items.contains(where: { $0.title == "goodbye.txt" }) {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    check(!model.left.items.contains { $0.title == "goodbye.txt" },
+          "and redraws itself once the file has gone, without being asked")
+
+    // The panels wrote their folder memory into this tool's own preferences
+    // domain — not the app's, since the tool has no bundle — so it is cleared
+    // rather than left behind in ~/Library/Preferences.
+    UserDefaults.standard.removePersistentDomain(forName: ProcessInfo.processInfo.processName)
+} catch {
+    print("  FAIL drag and drop: \(error)"); failures += 1
 }
 
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) CHECK(S) FAILED")

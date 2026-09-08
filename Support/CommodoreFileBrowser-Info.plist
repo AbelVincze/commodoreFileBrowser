@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Imported rather than exported: these formats are nobody's to own, and
+	     the browser is only saying which extensions it recognises so that Quick
+	     Look has a type to route by. Without this an .iff resolves to a dynamic
+	     type that no extension can claim. -->
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>hu.iparigrafika.iff</string>
+			<key>UTTypeDescription</key>
+			<string>Amiga IFF file</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<!-- One type for every IFF, not one per form: .iff is used for
+				     pictures and samples alike and only the bytes say which. -->
+				<key>public.filename-extension</key>
+				<array>
+					<string>iff</string>
+					<string>ilbm</string>
+					<string>lbm</string>
+					<string>anim</string>
+					<string>8svx</string>
+					<string>svx</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>hu.iparigrafika.sid</string>
+			<key>UTTypeDescription</key>
+			<string>Commodore SID tune</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sid</string>
+					<string>psid</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>hu.iparigrafika.tracker-module</string>
+			<key>UTTypeDescription</key>
+			<string>Tracker module</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mod</string>
+					<string>xm</string>
+					<string>s3m</string>
+					<string>it</string>
+					<string>med</string>
+					<string>mtm</string>
+					<string>okt</string>
+					<string>dbm</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>

@@ -23,6 +23,14 @@ struct TransferPlan {
     /// checkbox without having to work out the extension a second time.
     var nameWithExtension: String = ""
     var nameWithoutExtension: String = ""
+    /// Which panel the rows come from, and which one they are going to. Nil on
+    /// the source side means they came from outside the app, dropped in from
+    /// the Finder, and there is no panel behind them to read or scratch from.
+    var sourceSide: PanelSide?
+    var targetSide: PanelSide = .right
+    /// Whether `targetName` is a name the user typed. A drag says no: it puts
+    /// the files down under the names they already have.
+    var renamesSingleItem = true
 
     var verb: String { isMove ? "Move" : "Copy" }
     var summary: String {
@@ -47,6 +55,7 @@ enum AppSheet: Identifiable {
     case makeFolder
     case newImage
     case diskHeader
+    case repairDisk
     case viewer(ViewerContent)
     case addDecoration
     case player
@@ -63,6 +72,7 @@ enum AppSheet: Identifiable {
         case .makeFolder: return "mkdir"
         case .newImage: return "newimage"
         case .diskHeader: return "header"
+        case .repairDisk: return "repair"
         case .viewer(let v): return "viewer-\(v.id)"
         case .addDecoration: return "decorate"
         case .player: return "player"
@@ -82,6 +92,9 @@ final class AppModel: ObservableObject {
     let player = SIDPlayer()
     let modulePlayer = ModulePlayer()
     let samplePlayer = SamplePlayer()
+    /// The source end of every drag started in this window, and the state that
+    /// tells a drop it came from one of our own panels.
+    let dragCoordinator = DragCoordinator()
 
     @Published var activeSide: PanelSide = .left
     @Published var sheet: AppSheet?
@@ -95,6 +108,16 @@ final class AppModel: ObservableObject {
     @Published var moduleRequest: ModuleRequest?
     /// And the sample the 8SVX sheet is showing.
     @Published var sampleRequest: SampleRequest?
+    /// What the repair sheet is reporting, held apart from `sheet` the same
+    /// way, since it is a value the sheet reads rather than one it owns.
+    @Published var repairPlan: DiskRepairPlan?
+    /// The open image, when it is a Commodore one that could be repaired.
+    /// An Amiga volume keeps a bitmap of its own and knows nothing of a BAM.
+    var repairableImage: CBMDiskImage? {
+        guard let image = activePanel.image as? CBMDiskImage, image.canWrite else { return nil }
+        return image
+    }
+
     /// Whether the open image has a directory whose order can be rearranged.
     /// Kept here rather than read off the panel when the menu is drawn: the
     /// menu is rebuilt from what it observes on this object, and the panels
@@ -109,10 +132,14 @@ final class AppModel: ObservableObject {
 
     var activePanel: PanelModel { activeSide == .left ? left : right }
     var inactivePanel: PanelModel { activeSide == .left ? right : left }
+    var inactiveSide: PanelSide { activeSide == .left ? .right : .left }
+
+    func panel(_ side: PanelSide) -> PanelModel { side == .left ? left : right }
 
     init(settings: SettingsStore) {
         self.settings = settings
         applyHiddenSetting()
+        dragCoordinator.model = self
         left.restoreLocation()
         right.restoreLocation()
 
@@ -564,11 +591,12 @@ final class AppModel: ObservableObject {
         var type: CBMFileType
     }
 
-    private func read(_ item: PanelItem, from panel: PanelModel,
+    private func read(_ item: PanelItem, from panel: PanelModel?,
                       addingExtension: Bool = true) throws -> Payload {
         switch item.kind {
         case .imageFile:
-            guard let image = panel.image, let entry = item.cbm else { throw DiskImageError.fileNotFound }
+            guard let panel, let image = panel.image, let entry = item.cbm
+            else { throw DiskImageError.fileNotFound }
             let data = try image.read(entry, at: panel.location.imagePath)
             return Payload(data: data,
                            hostName: entry.hostFileName(addingExtension: addingExtension),
@@ -632,34 +660,39 @@ final class AppModel: ObservableObject {
                                        addsHostExtension: addsExtension,
                                        canAddHostExtension: canAddExtension,
                                        nameWithExtension: withExtension,
-                                       nameWithoutExtension: withoutExtension))
+                                       nameWithoutExtension: withoutExtension,
+                                       sourceSide: activeSide,
+                                       targetSide: inactiveSide))
     }
 
     func perform(_ plan: TransferPlan) {
         if plan.canAddHostExtension { settings.addHostExtension = plan.addsHostExtension }
-        let source = activePanel
-        let target = inactivePanel
+        let source = plan.sourceSide.map(panel(_:))
+        let target = panel(plan.targetSide)
+        let renameTo = plan.renamesSingleItem && plan.items.count == 1 ? plan.targetName : nil
         var copied = 0, skipped = 0
         var firstError: Error?
 
         for item in plan.items {
             do {
-                let renameTo = plan.items.count == 1 ? plan.targetName : nil
-                if item.kind == .folder {
-                    guard case .directory(let destURL) = plan.destination else {
-                        throw TransferError.folderIntoImage
-                    }
-                    guard let src = item.url else { continue }
+                // File system to file system, which is both sides of a drag
+                // between two Mac folders. The file system does the work: a
+                // folder keeps everything inside it, a file keeps its dates and
+                // its permissions, and nothing is read into memory on the way.
+                if !item.kind.isInsideImage, let src = item.url,
+                   case .directory(let destURL) = plan.destination {
                     let dst = destURL.appendingPathComponent(renameTo ?? item.title)
+                    if dst.standardizedFileURL == src.standardizedFileURL { skipped += 1; continue }
                     if FileManager.default.fileExists(atPath: dst.path) {
                         if plan.overwrite { try FileManager.default.removeItem(at: dst) }
                         else { skipped += 1; continue }
                     }
-                    try FileManager.default.copyItem(at: src, to: dst)
-                    if plan.isMove { try FileManager.default.removeItem(at: src) }
+                    if plan.isMove { try FileManager.default.moveItem(at: src, to: dst) }
+                    else { try FileManager.default.copyItem(at: src, to: dst) }
                     copied += 1
                     continue
                 }
+                if item.kind == .folder { throw TransferError.folderIntoImage }
 
                 let payload = try read(item, from: source,
                                        addingExtension: plan.addsHostExtension)
@@ -680,7 +713,10 @@ final class AppModel: ObservableObject {
                 case .image:
                     guard let image = target.image else { throw TransferError.noDestination }
                     guard image.canWrite else { throw DiskImageError.readOnly }
-                    let path = target.location.imagePath
+                    // The path comes from the plan rather than from the panel:
+                    // a drop can land on a directory row, one level deeper than
+                    // the listing the panel is showing.
+                    let path = plan.destination.imagePath
                     let name = imageName(for: payload, renamedTo: renameTo, in: image)
                     if let existing = try image.entries(at: path)
                         .first(where: { $0.name == PETSCII.trimPadding(name) }) {
@@ -698,6 +734,49 @@ final class AppModel: ObservableObject {
         }
 
         finishOperation(verb: plan.isMove ? "Moved" : "Copied", count: copied, skipped: skipped, error: firstError)
+    }
+
+    // MARK: - Drag and drop
+
+    /// Start dragging out of `panel`. A row that is marked takes the whole
+    /// marked set with it, the way the function keys act on one; an unmarked
+    /// row goes on its own and the cursor follows it.
+    func beginDrag(from panel: PanelModel, row: PanelItem) {
+        guard dragCoordinator.session == nil, row.isSelectable, row.kind != .volume else { return }
+        let items: [PanelItem]
+        if panel.marked.contains(row.id) {
+            items = panel.items.filter { panel.marked.contains($0.id) && $0.isSelectable }
+        } else {
+            items = [row]
+            panel.moveCursor(to: row.id)
+        }
+        // A directory inside an image is a tree this app cannot yet unpack, so
+        // it is left out rather than dragged into a failure.
+        let draggable = items.filter { $0.kind != .imageFolder && $0.kind != .volume }
+        guard !draggable.isEmpty else { return }
+        activeSide = panel.side
+        dragCoordinator.begin(items: draggable, from: panel)
+    }
+
+    /// Carry out a drop. `sourceSide` is nil when the files were dragged in
+    /// from another application, in which case `items` stand for paths on the
+    /// file system and there is no panel behind them.
+    func performDrop(items: [PanelItem], from sourceSide: PanelSide?, to targetSide: PanelSide,
+                     destination: PanelLocation, isMove: Bool) {
+        // This runs a moment after the mouse came up, so it is the last word on
+        // whether anything is still hovering: nothing is.
+        left.dropHighlight = nil
+        right.dropHighlight = nil
+        guard !items.isEmpty else { return }
+        var plan = TransferPlan(isMove: isMove, items: items, destination: destination,
+                                destinationLabel: panel(targetSide).headerTitle, targetName: "")
+        plan.sourceSide = sourceSide
+        plan.targetSide = targetSide
+        // A drag asks no questions: the files keep their names, and one that is
+        // already there is left alone rather than written over.
+        plan.renamesSingleItem = false
+        plan.addsHostExtension = settings.addHostExtension
+        perform(plan)
     }
 
     enum TransferError: LocalizedError {
@@ -733,10 +812,11 @@ final class AppModel: ObservableObject {
         finishOperation(verb: "Deleted", count: removed, skipped: 0, error: firstError)
     }
 
-    private func delete(_ item: PanelItem, in panel: PanelModel, toTrash: Bool) throws {
+    private func delete(_ item: PanelItem, in panel: PanelModel?, toTrash: Bool) throws {
         switch item.kind {
         case .imageFile, .imageFolder:
-            guard let image = panel.image, let entry = item.cbm else { throw DiskImageError.fileNotFound }
+            guard let panel, let image = panel.image, let entry = item.cbm
+            else { throw DiskImageError.fileNotFound }
             try image.delete(entry, at: panel.location.imagePath)
         case .file, .folder, .diskImage:
             guard let url = item.url else { throw DiskImageError.fileNotFound }
@@ -841,6 +921,36 @@ final class AppModel: ObservableObject {
             return
         }
         sheet = .diskHeader
+    }
+
+    /// Check the disk over and show what a repair would do. Nothing is
+    /// written until the sheet is confirmed.
+    func beginRepairDisk() {
+        guard let image = repairableImage else {
+            alertMessage = activePanel.image == nil
+                ? "Open a Commodore disk image to repair it."
+                : "Only a writable Commodore image has a BAM to repair."
+            return
+        }
+        repairPlan = image.analyseForRepair()
+        sheet = .repairDisk
+    }
+
+    func performRepair() {
+        guard let image = repairableImage else { return }
+        do {
+            let done = try image.applyRepair()
+            activePanel.refreshImage()
+            var parts: [String] = []
+            if !done.splatToScratch.isEmpty { parts.append("\(done.splatToScratch.count) scratched") }
+            if !done.wrongCounts.isEmpty { parts.append("\(done.wrongCounts.count) block counts") }
+            if done.toFree > 0 { parts.append("\(done.toFree) freed") }
+            if done.toAllocate > 0 { parts.append("\(done.toAllocate) allocated") }
+            if done.badFreeCounts > 0 { parts.append("\(done.badFreeCounts) free counts") }
+            statusMessage = parts.isEmpty
+                ? "Nothing needed repairing"
+                : "Repaired: " + parts.joined(separator: ", ") + " - \(done.blocksFreeAfter) blocks free"
+        } catch { fail(error) }
     }
 
     func performEditHeader(name: String, id: String) {

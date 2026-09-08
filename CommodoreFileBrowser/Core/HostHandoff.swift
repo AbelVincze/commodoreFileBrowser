@@ -25,19 +25,25 @@ enum HostHandoff {
     /// Replacing rather than adding matters: opening the same entry twice in a
     /// session should hand the application the same path, so it reloads what is
     /// in front of it instead of collecting numbered duplicates.
+    ///
+    /// `readOnly` is what makes a copy handed to an editor say so. A copy being
+    /// dragged somewhere asks for it off: that file is the one the user is
+    /// putting down, not a look at one, and it should land writable.
     @discardableResult
-    static func write(_ data: Data, named name: String, in folder: URL) throws -> URL {
+    static func write(_ data: Data, named name: String, in folder: URL,
+                      readOnly: Bool = true) throws -> URL {
         let manager = FileManager.default
         try manager.createDirectory(at: folder, withIntermediateDirectories: true)
 
         let url = folder.appendingPathComponent(safeName(name))
-        // An earlier copy is read-only, so it cannot simply be written over.
+        // An earlier copy may be read-only, so it cannot simply be written over.
         if manager.fileExists(atPath: url.path) {
             try? manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
             try manager.removeItem(at: url)
         }
         try data.write(to: url)
-        try? manager.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path)
+        try? manager.setAttributes([.posixPermissions: readOnly ? 0o444 : 0o644],
+                                   ofItemAtPath: url.path)
         return url
     }
 

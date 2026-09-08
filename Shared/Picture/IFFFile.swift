@@ -35,7 +35,7 @@ enum IFF {
         var at = range.lowerBound
         while at + 8 <= range.upperBound {
             let id = text(bytes, at, 4)
-            let size = Int(AmigaVolume.long(bytes, at + 4))
+            let size = Int(long(bytes, at + 4))
             let start = at + 8
             guard size >= 0 else { break }
             if start + size > range.upperBound {
@@ -51,7 +51,7 @@ enum IFF {
     /// The chunks of the form starting at `at`, and the form's own type.
     static func form(_ bytes: [UInt8], at: Int = 0) -> (type: String, chunks: [Chunk])? {
         guard at + 12 <= bytes.count, text(bytes, at, 4) == "FORM" else { return nil }
-        let size = Int(AmigaVolume.long(bytes, at + 4))
+        let size = Int(long(bytes, at + 4))
         // The stated size is a claim, not a fact. A file cut short mid-picture
         // still has a readable header and a partial body, and showing what
         // there is beats refusing the lot.
@@ -62,6 +62,19 @@ enum IFF {
     /// The first chunk with this id, or nil.
     static func chunk(_ id: String, in chunks: [Chunk]) -> Chunk? {
         chunks.first { $0.id == id }
+    }
+
+    /// A big endian long, which is what an IFF `ckSize` is.
+    ///
+    /// Its own rather than the Disk layer's `AmigaVolume.long`, which is the
+    /// same four lines: reaching for that one would put the whole of `Disk/`
+    /// behind this file, and the Quick Look extensions want the picture reader
+    /// without eleven files of disk formats behind it. Every layer here reads
+    /// its own bytes anyway — `HDFImage` has a local `long`, `SIDTune` a local
+    /// `be`, `T64Image` a little endian one.
+    static func long(_ b: [UInt8], _ o: Int) -> UInt32 {
+        guard o >= 0, o + 4 <= b.count else { return 0 }
+        return (UInt32(b[o]) << 24) | (UInt32(b[o + 1]) << 16) | (UInt32(b[o + 2]) << 8) | UInt32(b[o + 3])
     }
 
     static func text(_ b: [UInt8], _ at: Int, _ count: Int) -> String {

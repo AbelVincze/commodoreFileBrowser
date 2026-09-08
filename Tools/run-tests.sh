@@ -7,7 +7,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
-MPT="CommodoreFileBrowser/Audio/libopenmpt"
+MPT="Shared/Sound/libopenmpt"
 OBJDIR="build/libopenmpt"
 MPTFLAGS=(-std=c++20 -O2 -w -I"$MPT" -I"$MPT/common" -I"$MPT/src" -DLIBOPENMPT_BUILD)
 
@@ -32,18 +32,18 @@ if [ -s /tmp/cfb-mpt-todo.txt ]; then
 fi
 
 # The two engine shims are C, and swiftc will not take .c and .o together.
-cc -O2 -w -Wno-logical-not-parentheses -c -o "$OBJDIR/csid.o" CommodoreFileBrowser/Audio/csid.c
-cc -O2 -w -I"$MPT" -I"$MPT/common" -I"$MPT/src" -c -o "$OBJDIR/cmod.o" CommodoreFileBrowser/Audio/cmod.c
+cc -O2 -w -Wno-logical-not-parentheses -c -o "$OBJDIR/csid.o" Shared/Sound/csid.c
+cc -O2 -w -I"$MPT" -I"$MPT/common" -I"$MPT/src" -c -o "$OBJDIR/cmod.o" Shared/Sound/cmod.c
 
 # c-flod is 2012 C: old-style function pointer casts that clang now rejects by
 # default, and one x86 debug trap. 58 small files, so no caching needed.
-CFLOD="CommodoreFileBrowser/Audio/cflod"
-CFLODFLAGS=(-O2 -w -I"$CFLOD" -I"$CFLOD/flashlib" -ICommodoreFileBrowser/Audio
+CFLOD="Shared/Sound/cflod"
+CFLODFLAGS=(-O2 -w -I"$CFLOD" -I"$CFLOD/flashlib" -IShared/Sound
             -Wno-incompatible-function-pointer-types -Wno-int-conversion
             -Wno-implicit-function-declaration -Wno-incompatible-pointer-types
             -Wno-return-type)
 mkdir -p "$OBJDIR/cflod"
-cc "${CFLODFLAGS[@]}" -c -o "$OBJDIR/cflod/shim.o" CommodoreFileBrowser/Audio/cflod.c
+cc "${CFLODFLAGS[@]}" -c -o "$OBJDIR/cflod/shim.o" Shared/Sound/cflod.c
 i=0
 while IFS= read -r src; do
     obj="$OBJDIR/cflod/$(echo "${src#$CFLOD/}" | tr '/' '_' | sed 's/\.c$/.o/')"
@@ -54,12 +54,17 @@ done < <(find "$CFLOD" -name '*.c' | sort)
 
 OUT="${TMPDIR:-/tmp}/cfb-disktests"
 swiftc -O -o "$OUT" \
-    -import-objc-header CommodoreFileBrowser/CommodoreFileBrowser-Bridging-Header.h \
+    -import-objc-header Shared/Sound/Shared-Bridging-Header.h \
     -Xcc -Wno-logical-not-parentheses \
     -Xcc -I"$MPT" -Xcc -I"$MPT/common" -Xcc -I"$MPT/src" \
+    Shared/Picture/*.swift \
+    Shared/Sound/*.swift \
     CommodoreFileBrowser/Core/*.swift \
     CommodoreFileBrowser/Disk/*.swift \
-    CommodoreFileBrowser/Model/PanelModel.swift \
+    CommodoreFileBrowser/Model/*.swift \
+    CommodoreFileBrowser/DragDrop/*.swift \
+    CommodoreFileBrowser/Views/*.swift \
+    CommodoreFileBrowser/Audio/*.swift \
     Tools/DiskTests/main.swift \
     -Xlinker -lc++ $(printf -- '%s ' "$OBJDIR"/*.o "$OBJDIR"/cflod/*.o)
 exec "$OUT"

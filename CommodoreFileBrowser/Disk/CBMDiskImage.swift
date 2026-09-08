@@ -304,7 +304,25 @@ final class CBMDiskImage: DiskImage {
         case .d64, .d67: break
         }
         claimChain(from: Int(bytes[headerOffset]), Int(bytes[headerOffset + 1]))
-        for entry in entries where entry.startTrack != 0 {
+
+        // And the directory as `scanDirectory` actually found it. Following
+        // only the header link is not enough: a disk whose link byte is
+        // rubbish still has a directory, read from the fixed first sector, and
+        // its blocks are in use whatever the header says. Two disks here point
+        // their header at track 169 and were reporting their own six directory
+        // sectors as a mismatch that nothing could ever clear.
+        var dirT = format.isPET ? dirTrack : Int(bytes[headerOffset])
+        var dirS = format.isPET ? firstDirSector : Int(bytes[headerOffset + 1])
+        if dirT == 0 || offset(dirT, dirS) == nil {
+            dirT = dirTrack
+            dirS = firstDirSector
+        }
+        claimChain(from: dirT, dirS)
+
+        // A DEL entry owns nothing — the drive frees a scratched file's blocks
+        // and only the name is left — so its start pointer, where it has one,
+        // is not a claim on anything.
+        for entry in entries where entry.startTrack != 0 && entry.type != .del {
             claimChain(from: Int(entry.startTrack), Int(entry.startSector))
         }
 
@@ -834,5 +852,268 @@ final class CBMDiskImage: DiskImage {
         }
 
         try Data(bytes).write(to: url, options: .withoutOverwriting)
+    }
+}
+
+// MARK: - Repair
+
+/// What a repair found, and what it would change.
+///
+/// Produced before anything is written so the sheet can say both halves of it:
+/// this is what is wrong, this is what I am about to do.
+struct DiskRepairPlan {
+    struct FileFinding {
+        var name: String
+        var statedBlocks: Int
+        var actualBlocks: Int
+    }
+    /// One sector claimed by more than one file. Blocking: there is no way to
+    /// tell which of them the sector really belongs to.
+    struct Collision {
+        var track: Int
+        var sector: Int
+        var claimedBy: [String]
+    }
+
+    var filesChecked = 0
+    /// Unclosed files, which a repair scratches the way `VALIDATE` does.
+    var splatToScratch: [String] = []
+    var wrongCounts: [FileFinding] = []
+    /// Allocated in the BAM and used by nothing.
+    var toFree = 0
+    /// In use and marked free, which is how a save overwrites a file.
+    var toAllocate = 0
+    /// Tracks whose free count disagrees with their own map. This is what
+    /// makes a disk report more free blocks than it has room for, and the
+    /// header's mismatch check cannot see it — that compares which blocks are
+    /// allocated, not how many each track says it has.
+    var badFreeCounts = 0
+    var blocksFreeBefore = 0
+    var blocksFreeAfter = 0
+    var collisions: [Collision] = []
+    var brokenChains: [String] = []
+
+    /// Repair only touches a disk it can put entirely right. A shared sector
+    /// or a chain that leaves the disk is damage the BAM cannot describe, and
+    /// guessing at it would lose a file rather than save one.
+    var canRepair: Bool { collisions.isEmpty && brokenChains.isEmpty }
+
+    var isClean: Bool {
+        splatToScratch.isEmpty && wrongCounts.isEmpty && toFree == 0 && toAllocate == 0
+            && badFreeCounts == 0 && collisions.isEmpty && brokenChains.isEmpty
+    }
+}
+
+extension CBMDiskImage {
+
+    /// What a repair would find and do. Writes nothing.
+    func analyseForRepair() -> DiskRepairPlan { survey().plan }
+
+    /// Put the disk right, and say what was done.
+    ///
+    /// The survey is taken again rather than trusting the one the sheet was
+    /// built from: it is cheap, and it means the report and the repair can
+    /// never be describing different disks.
+    @discardableResult
+    func applyRepair() throws -> DiskRepairPlan {
+        guard canWrite else { throw DiskImageError.readOnly }
+        let found = survey()
+        guard found.plan.canRepair else {
+            throw DiskImageError.corrupt("this disk has damage a repair cannot put right")
+        }
+
+        // Scratching is a zeroed type byte, which is exactly what the drive
+        // does: the slot becomes empty and the next save can have it.
+        for offset in found.splatOffsets { bytes[offset + 2] = 0 }
+
+        // The block count is two bytes in the middle of an entry, and
+        // `writeEntry` clears the whole of one, so this is written by hand.
+        for correction in found.corrections {
+            bytes[correction.offset + 30] = UInt8(correction.blocks & 0xFF)
+            bytes[correction.offset + 31] = UInt8((correction.blocks >> 8) & 0xFF)
+        }
+
+        // Every track back to empty, then everything the files actually occupy
+        // allocated again. Starting from a written count rather than the one
+        // that was there is the point: from a known figure `setAllocated`
+        // subtracting one per sector arrives at the right answer.
+        for track in 1...trackCount where bam(track: track) != nil {
+            resetTrackToFree(track)
+        }
+        for key in found.claims.keys { setAllocated(key >> 8, key & 0xFF, true) }
+
+        hasUnsavedChanges = true
+        try scanDirectory()
+        return found.plan
+    }
+
+    // MARK: The survey
+
+    private struct Survey {
+        var plan = DiskRepairPlan()
+        /// Every sector in use, keyed `track << 8 | sector`, and who claims it.
+        var claims: [Int: [String]] = [:]
+        var corrections: [(offset: Int, blocks: Int)] = []
+        var splatOffsets: [Int] = []
+    }
+
+    /// Puts a whole track back to empty: every sector free, and the free count
+    /// written rather than counted up to.
+    ///
+    /// `setAllocated` keeps the count in step by adding and subtracting one,
+    /// which is right for a drive going about its business and useless here.
+    /// Freeing a sector that is already free changes nothing, so a count byte
+    /// that was rubbish to begin with would survive being freed and then be
+    /// decremented from rubbish. One disk here claims 193 free sectors on a
+    /// track that holds 21, and 3106 free blocks on a disk that holds 664.
+    private func resetTrackToFree(_ track: Int) {
+        guard let b = bam(track: track) else { return }
+        let count = sectorsPerTrack(track)
+        for byte in 0..<((count + 7) / 8) { bytes[b.bitmap + byte] = 0 }
+        for sector in 0..<count { bytes[b.bitmap + sector / 8] |= 1 << UInt8(sector % 8) }
+        bytes[b.count] = UInt8(count)
+    }
+
+    /// Tracks whose free count does not match their own bitmap. Nothing else
+    /// looks at this: `checkBAM` compares which blocks are allocated, so a disk
+    /// can have a perfectly good map and still report an impossible number of
+    /// blocks free.
+    private func tracksWithBadFreeCount() -> Int {
+        var bad = 0
+        for track in 1...trackCount {
+            guard let b = bam(track: track) else { continue }
+            let count = sectorsPerTrack(track)
+            let free = (0..<count).filter { isFree(track, $0) }.count
+            if Int(bytes[b.count]) != free { bad += 1 }
+        }
+        return bad
+    }
+
+    /// Follows a sector chain. `ok` is false where it ran off the disk or came
+    /// back to a sector it had already been through — neither is something the
+    /// BAM can be made to describe.
+    private func repairChain(from track: Int, _ sector: Int) -> (blocks: [Int], ok: Bool) {
+        var out: [Int] = []
+        var t = track, s = sector
+        var seen = Set<Int>()
+        while t != 0 {
+            guard let o = offset(t, s), !seen.contains(o) else { return (out, false) }
+            seen.insert(o)
+            out.append(t << 8 | s)
+            t = Int(bytes[o])
+            s = Int(bytes[o + 1])
+        }
+        return (out, true)
+    }
+
+    private func survey() -> Survey {
+        var found = Survey()
+        found.plan.blocksFreeBefore = blocksFree
+
+        func claim(_ key: Int, by name: String) {
+            guard offset(key >> 8, key & 0xFF) != nil else { return }
+            if found.claims[key]?.contains(name) == true { return }
+            found.claims[key, default: []].append(name)
+        }
+
+        // The sectors a drive always keeps for itself: the header, the BAM
+        // blocks of whichever format this is, and the directory. Claimed under
+        // one name so the directory arriving by two routes below is not read
+        // as two claimants.
+        let system = "the directory"
+        claim(dirTrack << 8, by: system)
+        switch format {
+        case .d71: claim(53 << 8, by: system)
+        case .d81: claim(40 << 8 | 1, by: system); claim(40 << 8 | 2, by: system)
+        case .d80: claim(38 << 8, by: system); claim(38 << 8 | 3, by: system)
+        case .d82: for s in [0, 3, 6, 9] { claim(38 << 8 | s, by: system) }
+        case .d64, .d67: break
+        }
+
+        // Both routes into the directory, because both are real. A PET drive
+        // chains its header to the BAM and the directory only follows that,
+        // while `scanDirectory` falls back to the fixed first sector when the
+        // link is unusable — and the blocks it read are the blocks in use.
+        for key in repairChain(from: Int(bytes[headerOffset]),
+                               Int(bytes[headerOffset + 1])).blocks {
+            claim(key, by: system)
+        }
+        var track = format.isPET ? dirTrack : Int(bytes[headerOffset])
+        var sector = format.isPET ? firstDirSector : Int(bytes[headerOffset + 1])
+        if track == 0 || offset(track, sector) == nil {
+            track = dirTrack
+            sector = firstDirSector
+        }
+        for key in repairChain(from: track, sector).blocks { claim(key, by: system) }
+
+        for entry in entries {
+            let name = entry.displayName
+            // A listed DEL is a rule or a box drawn in the directory. It owns
+            // no blocks and is left exactly as it is.
+            if entry.type == .del { continue }
+            // An unclosed file is what a drive leaves after an interrupted
+            // save, and its entry usually still points into a live file's
+            // data. VALIDATE scratches these, and setting them aside here —
+            // before anything is compared — is what lets the rest of the disk
+            // be put right at all.
+            if entry.isSplat {
+                found.plan.splatToScratch.append(name)
+                found.splatOffsets.append(entry.entryOffset)
+                continue
+            }
+
+            found.plan.filesChecked += 1
+            let walk = repairChain(from: Int(entry.startTrack), Int(entry.startSector))
+            guard walk.ok else { found.plan.brokenChains.append(name); continue }
+            var blocks = walk.blocks
+
+            // A REL file's side sectors are blocks like any other, and nothing
+            // else in this browser follows them. Missing them would mean
+            // freeing them, which is how a repair would break a file.
+            if entry.type == .rel {
+                let side = repairChain(from: Int(bytes[entry.entryOffset + 21]),
+                                       Int(bytes[entry.entryOffset + 22]))
+                guard side.ok else { found.plan.brokenChains.append(name); continue }
+                blocks += side.blocks
+            }
+
+            for key in blocks { claim(key, by: name) }
+            if entry.blocks != blocks.count {
+                found.plan.wrongCounts.append(.init(name: name,
+                                                    statedBlocks: entry.blocks,
+                                                    actualBlocks: blocks.count))
+            }
+            found.corrections.append((entry.entryOffset, blocks.count))
+        }
+
+        for (key, names) in found.claims where names.count > 1 {
+            found.plan.collisions.append(.init(track: key >> 8, sector: key & 0xFF,
+                                               claimedBy: names))
+        }
+        found.plan.collisions.sort { ($0.track, $0.sector) < ($1.track, $1.sector) }
+
+        // Only tracks the BAM covers can be compared: a 40 track D64 has
+        // sectors past the end of its own allocation map.
+        for t in 1...trackCount where bam(track: t) != nil {
+            for s in 0..<sectorsPerTrack(t) {
+                let inUse = found.claims[t << 8 | s] != nil
+                let free = isFree(t, s)
+                if inUse, free { found.plan.toAllocate += 1 }
+                if !inUse, !free { found.plan.toFree += 1 }
+            }
+        }
+
+        // What `blocksFree` would report afterwards, counted the same way it
+        // counts: the directory track never contributes.
+        var after = 0
+        for t in 1...trackCount where t != dirTrack && bam(track: t) != nil {
+            if case .d71 = format, t == 53 { continue }
+            let used = (0..<sectorsPerTrack(t)).filter { found.claims[t << 8 | $0] != nil }.count
+            after += sectorsPerTrack(t) - used
+        }
+        found.plan.blocksFreeAfter = after
+        found.plan.badFreeCounts = tracksWithBadFreeCount()
+
+        return found
     }
 }

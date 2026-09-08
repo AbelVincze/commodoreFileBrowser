@@ -113,6 +113,8 @@ struct CommodoreFileBrowserApp: App {
                     .keyboardShortcut("c", modifiers: [.command, .shift])
                 Divider()
                 Button("Edit Disk Header…") { model.beginEditHeader() }
+                Button("Repair Disk (Validate)…") { model.beginRepairDisk() }
+                    .disabled(model.repairableImage == nil)
                 Button("Add DEL Entry…") { model.sheet = .addDecoration }
                 Button("Toggle Lock (<)") { model.toggleLock() }
                 Divider()

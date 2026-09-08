@@ -177,6 +177,12 @@ struct ContentView: View {
                                 model.sheet = nil
                                 model.performEditHeader(name: name, id: id)
                             })
+        case .repairDisk:
+            if let plan = model.repairPlan {
+                RepairSheet(plan: plan, diskName: model.activePanel.headerTitle, palette: palette,
+                            onCancel: { model.sheet = nil },
+                            onConfirm: { model.sheet = nil; model.performRepair() })
+            }
         case .addDecoration:
             TextPromptSheet(title: "Add DEL entry", label: "Text", confirmTitle: "Add",
                             text: "----------------", palette: palette,

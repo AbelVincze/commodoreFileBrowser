@@ -27,6 +27,9 @@ derived data, from Xcode and from the command line alike.
   archives, browsed in place or unpacked.
 * Copy, move, rename, delete and make folders in all four directions between
   the Mac and an image, or between two open images.
+* Drag and drop, in and out: between the panels, or to and from the Finder.
+  Same volume moves, two volumes copy, `⌥` swaps the two — and the inside of an
+  image counts as a volume of its own.
 * Editing an image is a transaction: nothing touches the file on disk until the
   panel leaves, and `Esc` throws the changes away.
 * Format a blank image, edit a disk header, lock entries, rearrange a
@@ -122,6 +125,8 @@ because the names are never converted to ASCII for display.
 | `Ctrl-Shift` or `⇧⌘C` | switch the Commodore font between upper and lower case |
 | `⇧⌘.` | show hidden files |
 | `⌘↑` `⌘↓` | move an entry within an image directory |
+| drag | move or copy — between the panels, or to and from the Finder |
+| `⌥` drag | copy where it would move, and move where it would copy |
 
 If macOS has `F1`–`F12` mapped to brightness and media keys, hold `Fn`, or turn
 on *Use F1, F2, etc. keys as standard function keys* in System Settings ›
@@ -149,6 +154,35 @@ Mac side moves items to the Trash by default (a setting); deleting inside an
 image scratches the entry and frees its blocks in the BAM.
 
 An image on read-only media is opened read-only and shows a lock in its header.
+
+### Dragging
+
+The same four directions can be dragged instead, and the Finder is a fifth: a
+selection dragged out lands wherever it is dropped, and files dragged in from
+another application go into the panel they are dropped on.
+
+Which of move and copy a drop means is decided the way the Finder decides it.
+Two folders on the same volume move; two volumes copy; and `⌥` held at the drop
+asks for whichever of the two the volumes did not imply. **The inside of an
+image is a volume of its own**, so anything crossing that boundary copies by
+default — which is also what it has to be, since the bytes are rewritten into
+the other format on the way. Copying between two directories of one image, on
+the other hand, moves.
+
+The badge under the pointer says which it will be, and the panel says where it
+will land: an outline around the whole listing for the folder it is showing, or
+around a single row for a folder inside it. Dropping back where the files
+already are, dropping a folder into a disk image, dropping anything into a
+read-only image, and dropping a folder inside itself are all refused before the
+mouse is let go.
+
+A drag started on a marked row takes every marked row with it; one started
+anywhere else takes that row alone. A move the Finder makes happens on its own
+queue, after the drag has already ended, so the panel follows the files it let
+go of for a few seconds and redraws itself the moment one of them goes. Rows that live inside an image are written
+out to a temporary folder as the drag starts, since a directory entry is not a
+file until something makes one of it; a name already taken on the far side is
+left alone, and the status line says how many were skipped.
 
 ## Editing an image is a transaction
 
@@ -205,7 +239,8 @@ Mac side as well as inside an image, since the last hundred bytes are what
 decide whether a file still fits a 170K disk.
 
 `BAM MISMATCH` compares the allocation bitmap against the blocks the directory
-and its files actually occupy. Scene disks routinely leave the two out of step
+and its files actually occupy — *Commodore ▸ Repair Disk* is what to do about
+it. Scene disks routinely leave the two out of step
 to hide data from the DOS, and a half-written image shows up the same way.
 
 The key bar spans the full width, one segment per function key divided by
@@ -651,6 +686,71 @@ Beyond plain file management: edit the disk header, insert a `DEL` entry to
 draw rules and boxes in a directory, lock and unlock entries, and move an entry
 up or down to rearrange the listing.
 
+### Repair Disk
+
+The 1541's `VALIDATE`, with a report first. It walks every file's block chain —
+and a `REL` file's side sectors, which nothing else here follows — then rebuilds
+the allocation map from what it found, corrects the block count on every entry
+that disagrees with its own file, and hands back the sectors that were marked
+allocated and used by nothing.
+
+It shows what it found before it writes anything: the unclosed files it will
+scratch, the block counts it will correct, how many sectors it will free and
+allocate, and what the free count will be afterwards. Like every other edit to
+an image it lands in memory, so `Esc` still discards it and `⌘S` still commits
+it.
+
+An **unclosed file** — the `*` a drive leaves after an interrupted save — is
+scratched, which is what `VALIDATE` does and is usually the whole problem: its
+entry still points into a live file's data, and setting it aside first is what
+lets the rest of the disk be put right. Of the 48 disks this was written
+against, 19 hold one, and they account for 13 of the 17 that look like they
+have two files sharing a sector.
+
+What it will not do is guess. Two closed files claiming one sector, or a chain
+that walks off the disk, is damage the allocation map cannot describe: the
+report names the files and nothing is written. Seven of those 48 disks fall
+that way; the other 41 come out clean.
+
+A `DEL` entry owns nothing — a scratched file's blocks go back to the disk and
+only the name is left — so directory art is read as the decoration it is and
+left alone.
+
+## Quick Look
+
+Two app extensions put the same readers behind Finder's space bar.
+
+**Thumbnails.** An IFF picture becomes its own icon, drawn at the shape it was
+meant to have rather than squared off. A folder of ILBMs reads as pictures
+instead of as a wall of blank pages. It compiles the picture reader and nothing
+else — no emulator, no engines — because a thumbnail is asked for a folder at a
+time and the system will not wait while something warms up.
+
+**Previews.** Space bar on a picture shows it with its size and mode; on a SID
+tune, a tracker module or an 8SVX sample it shows what the file is and starts
+playing. Quick Look tears a preview down as the arrow keys move through a
+folder, so the sound stops with it — otherwise walking past ten tunes would
+leave ten running.
+
+Both decide what a file is from its own bytes. What they cannot do is decide
+which files to be offered in the first place: Quick Look routes by type, and a
+type comes from the extension on the name. `.iff`, `.ilbm`, `.lbm`, `.anim`,
+`.8svx`, `.sid`, `.mod`, `.xm`, `.s3m`, `.it`, `.med` and a few more are
+declared and work. An Amiga file called `mod.something` or `pic.1` does not:
+its extension is the tune's name, so macOS has nothing to match. Those are what
+the browser itself is for, where `Return` reads the bytes instead.
+
+An extension only exists once the app is installed and registered, which means
+in `/Applications` rather than run from a build folder:
+
+```bash
+cp -R build/Products/Release/CommodoreFileBrowser.app /Applications/
+```
+
+Opening it once is enough for macOS to find the extensions inside it. *System
+Settings › General › Login Items & Extensions › Quick Look* lists them, and is
+where to turn them off.
+
 ## Credits
 
 The two audio engines are vendored into the tree rather than linked, so there is
@@ -688,6 +788,28 @@ megabytes. Its tracker and FastTracker players are left out: libopenmpt plays
 those, and c-flod's FastTracker is a 5.8 MB static structure dimensioned for 32
 instruments that fails on ordinary XM files.
 
+## The source tree
+
+Three targets share one folder tree:
+
+| | |
+|---|---|
+| `Shared/Picture` | the IFF container and the ILBM reader — the app, the previews and the thumbnails |
+| `Shared/Sound` | SID, module and 8SVX readers, the three players, and the vendored C engines — the app and the previews |
+| `CommodoreFileBrowser` | the browser: panels, dialogs, disk formats, themes, video export |
+| `QuickLookPreview`, `QuickLookThumbnail` | one file each, near enough |
+
+Xcode compiles a folder into a target, so the tree is what says which target
+gets what — there are no membership lists to keep in step. Each target compiles
+its folders into one module, so nothing needs importing and nothing needs to be
+`public`. `Shared/Sound` reads IFF chunks for its 8SVX, so anything taking
+Sound takes Picture too.
+
+The engines are compiled twice, once for the browser and once for the preview
+extension. That is about seventy seconds of libopenmpt per architecture on a
+clean build and nothing at all on an incremental one — cheaper than a framework
+and the `public` annotations one would need across thirty files.
+
 ## Tests
 
 ```bash
@@ -700,7 +822,11 @@ sizes through write, save, reopen, read, delete, rename, reorder and header
 edit — including packing a D64 until it is full — and round trips a T64.
 It also covers the transaction rules above: that edits stay off disk until the
 panel leaves, that leaving normally commits them, and that `Esc` discards them
-without changing the file.
+without changing the file. And the drag rules: which of move and copy two
+places imply, which drops are refused before the mouse is let go, and that a
+drop between two folders, into an image, back out of one, or in from another
+application puts the files where they were dropped. The pointer itself is not
+driven — everything behind it is.
 
 The music side is checked against real collections rather than fixtures. SID:
 the naming convention against every shape on the disks, PSID parsing, and the

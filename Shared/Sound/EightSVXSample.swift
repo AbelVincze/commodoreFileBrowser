@@ -48,8 +48,8 @@ enum EightSVXDecoder {
         guard let body = IFF.chunk("BODY", in: form.chunks) else { throw Failure.noBody }
 
         let o = vhdr.range.lowerBound
-        let oneShot = Int(AmigaVolume.long(bytes, o))
-        let repeatLength = Int(AmigaVolume.long(bytes, o + 4))
+        let oneShot = Int(IFF.long(bytes, o))
+        let repeatLength = Int(IFF.long(bytes, o + 4))
         let rate = o + 13 < bytes.count ? Int(bytes[o + 12]) << 8 | Int(bytes[o + 13]) : 0
         let octaves = o + 14 < bytes.count ? Int(bytes[o + 14]) : 1
         let compression = o + 15 < bytes.count ? Int(bytes[o + 15]) : 0

@@ -6,8 +6,47 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CF00000000000000000024 /* QuickLookThumbnail.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CF0000000000000000001E /* QuickLookThumbnail.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		CF00000000000000000030 /* QuickLookPreview.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CF0000000000000000002B /* QuickLookPreview.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CF00000000000000000026 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CF00000000000000000013 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CF0000000000000000001F;
+			remoteInfo = QuickLookThumbnail;
+		};
+		CF00000000000000000032 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CF00000000000000000013 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CF0000000000000000002C;
+			remoteInfo = QuickLookPreview;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		CF00000000000000000023 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				CF00000000000000000024 /* QuickLookThumbnail.appex in Embed Foundation Extensions */,
+				CF00000000000000000030 /* QuickLookPreview.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		CF0000000000000000000B /* CommodoreFileBrowser.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CommodoreFileBrowser.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CF0000000000000000001E /* QuickLookThumbnail.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = QuickLookThumbnail.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CF0000000000000000002B /* QuickLookPreview.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = QuickLookPreview.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +55,44 @@
 			path = CommodoreFileBrowser;
 			sourceTree = "<group>";
 		};
+		CF0000000000000000001B /* Picture */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Picture;
+			sourceTree = "<group>";
+		};
+		CF0000000000000000001C /* Sound */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Sound;
+			sourceTree = "<group>";
+		};
+		CF0000000000000000001D /* QuickLookThumbnail */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = QuickLookThumbnail;
+			sourceTree = "<group>";
+		};
+		CF0000000000000000002A /* QuickLookPreview */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = QuickLookPreview;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		CF0000000000000000000C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF00000000000000000021 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF0000000000000000002E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +106,9 @@
 			isa = PBXGroup;
 			children = (
 				CF0000000000000000000A /* CommodoreFileBrowser */,
+				CF0000000000000000001A /* Shared */,
+				CF0000000000000000001D /* QuickLookThumbnail */,
+				CF0000000000000000002A /* QuickLookPreview */,
 				CF0000000000000000000E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,8 +117,19 @@
 			isa = PBXGroup;
 			children = (
 				CF0000000000000000000B /* CommodoreFileBrowser.app */,
+				CF0000000000000000001E /* QuickLookThumbnail.appex */,
+				CF0000000000000000002B /* QuickLookPreview.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		CF0000000000000000001A /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				CF0000000000000000001B /* Picture */,
+				CF0000000000000000001C /* Sound */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -56,18 +143,70 @@
 				CF00000000000000000011 /* Sources */,
 				CF0000000000000000000C /* Frameworks */,
 				CF00000000000000000012 /* Resources */,
+				CF00000000000000000023 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CF00000000000000000025 /* PBXTargetDependency */,
+				CF00000000000000000031 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				CF0000000000000000000A /* CommodoreFileBrowser */,
+				CF0000000000000000001B /* Picture */,
+				CF0000000000000000001C /* Sound */,
+			);
+			name = CommodoreFileBrowser;
+			productName = CommodoreFileBrowser;
+			productReference = CF0000000000000000000B /* CommodoreFileBrowser.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CF0000000000000000001F /* QuickLookThumbnail */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CF00000000000000000027 /* Build configuration list for PBXNativeTarget "QuickLookThumbnail" */;
+			buildPhases = (
+				CF00000000000000000020 /* Sources */,
+				CF00000000000000000021 /* Frameworks */,
+				CF00000000000000000022 /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				CF0000000000000000000A /* CommodoreFileBrowser */,
+				CF0000000000000000001B /* Picture */,
+				CF0000000000000000001D /* QuickLookThumbnail */,
 			);
-			name = CommodoreFileBrowser;
-			productName = CommodoreFileBrowser;
-			productReference = CF0000000000000000000B /* CommodoreFileBrowser.app */;
-			productType = "com.apple.product-type.application";
+			name = QuickLookThumbnail;
+			packageProductDependencies = (
+			);
+			productName = QuickLookThumbnail;
+			productReference = CF0000000000000000001E /* QuickLookThumbnail.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		CF0000000000000000002C /* QuickLookPreview */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CF00000000000000000033 /* Build configuration list for PBXNativeTarget "QuickLookPreview" */;
+			buildPhases = (
+				CF0000000000000000002D /* Sources */,
+				CF0000000000000000002E /* Frameworks */,
+				CF0000000000000000002F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CF0000000000000000001B /* Picture */,
+				CF0000000000000000001C /* Sound */,
+				CF0000000000000000002A /* QuickLookPreview */,
+			);
+			name = QuickLookPreview;
+			packageProductDependencies = (
+			);
+			productName = QuickLookPreview;
+			productReference = CF0000000000000000002B /* QuickLookPreview.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -99,12 +238,28 @@
 			projectRoot = "";
 			targets = (
 				CF0000000000000000000F /* CommodoreFileBrowser */,
+				CF0000000000000000001F /* QuickLookThumbnail */,
+				CF0000000000000000002C /* QuickLookPreview */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		CF00000000000000000012 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF00000000000000000022 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF0000000000000000002F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -151,7 +306,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CF00000000000000000020 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF0000000000000000002D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		CF00000000000000000025 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CF0000000000000000001F /* QuickLookThumbnail */;
+			targetProxy = CF00000000000000000026 /* PBXContainerItemProxy */;
+		};
+		CF00000000000000000031 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CF0000000000000000002C /* QuickLookPreview */;
+			targetProxy = CF00000000000000000032 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		CF00000000000000000015 /* Debug */ = {
@@ -224,13 +406,14 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt/common",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt/src",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/cflod",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/cflod/flashlib",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio",
+					"$(SRCROOT)/Shared/Sound/libopenmpt",
+					"$(SRCROOT)/Shared/Sound/libopenmpt/common",
+					"$(SRCROOT)/Shared/Sound/libopenmpt/src",
+					"$(SRCROOT)/Shared/Sound/cflod",
+					"$(SRCROOT)/Shared/Sound/cflod/flashlib",
+					"$(SRCROOT)/Shared/Sound",
 				);
+				INFOPLIST_FILE = "Support/CommodoreFileBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Commodore File Browser";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -251,7 +434,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "CommodoreFileBrowser/CommodoreFileBrowser-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "Shared/Sound/Shared-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -274,13 +457,14 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt/common",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/libopenmpt/src",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/cflod",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio/cflod/flashlib",
-					"$(SRCROOT)/CommodoreFileBrowser/Audio",
+					"$(SRCROOT)/Shared/Sound/libopenmpt",
+					"$(SRCROOT)/Shared/Sound/libopenmpt/common",
+					"$(SRCROOT)/Shared/Sound/libopenmpt/src",
+					"$(SRCROOT)/Shared/Sound/cflod",
+					"$(SRCROOT)/Shared/Sound/cflod/flashlib",
+					"$(SRCROOT)/Shared/Sound",
 				);
+				INFOPLIST_FILE = "Support/CommodoreFileBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Commodore File Browser";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -301,7 +485,155 @@
 				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "CommodoreFileBrowser/CommodoreFileBrowser-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "Shared/Sound/Shared-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		CF00000000000000000028 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Support/QuickLookThumbnail.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Support/QuickLookThumbnail-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Amiga Picture Thumbnails";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser.QuickLookThumbnail;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		CF00000000000000000029 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Support/QuickLookThumbnail.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Support/QuickLookThumbnail-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Amiga Picture Thumbnails";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser.QuickLookThumbnail;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		CF00000000000000000034 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CODE_SIGN_ENTITLEMENTS = Support/QuickLookPreview.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					LIBOPENMPT_BUILD,
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/Shared/Sound/libopenmpt",
+					"$(SRCROOT)/Shared/Sound/libopenmpt/common",
+					"$(SRCROOT)/Shared/Sound/libopenmpt/src",
+					"$(SRCROOT)/Shared/Sound/cflod",
+					"$(SRCROOT)/Shared/Sound/cflod/flashlib",
+					"$(SRCROOT)/Shared/Sound",
+				);
+				INFOPLIST_FILE = "Support/QuickLookPreview-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Commodore and Amiga Preview";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_CFLAGS = (
+					"-Wno-logical-not-parentheses",
+					"-Wno-incompatible-function-pointer-types",
+					"-Wno-int-conversion",
+					"-Wno-implicit-function-declaration",
+					"-Wno-incompatible-pointer-types",
+					"-Wno-return-type",
+				);
+				OTHER_CPLUSPLUSFLAGS = "-w";
+				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser.QuickLookPreview;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Shared/Sound/Shared-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		CF00000000000000000035 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CODE_SIGN_ENTITLEMENTS = Support/QuickLookPreview.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					LIBOPENMPT_BUILD,
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/Shared/Sound/libopenmpt",
+					"$(SRCROOT)/Shared/Sound/libopenmpt/common",
+					"$(SRCROOT)/Shared/Sound/libopenmpt/src",
+					"$(SRCROOT)/Shared/Sound/cflod",
+					"$(SRCROOT)/Shared/Sound/cflod/flashlib",
+					"$(SRCROOT)/Shared/Sound",
+				);
+				INFOPLIST_FILE = "Support/QuickLookPreview-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Commodore and Amiga Preview";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_CFLAGS = (
+					"-Wno-logical-not-parentheses",
+					"-Wno-incompatible-function-pointer-types",
+					"-Wno-int-conversion",
+					"-Wno-implicit-function-declaration",
+					"-Wno-incompatible-pointer-types",
+					"-Wno-return-type",
+				);
+				OTHER_CPLUSPLUSFLAGS = "-w";
+				PRODUCT_BUNDLE_IDENTIFIER = hu.iparigrafika.CommodoreFileBrowser.QuickLookPreview;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Shared/Sound/Shared-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
@@ -323,6 +655,24 @@
 			buildConfigurations = (
 				CF00000000000000000015 /* Debug */,
 				CF00000000000000000016 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CF00000000000000000027 /* Build configuration list for PBXNativeTarget "QuickLookThumbnail" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF00000000000000000028 /* Debug */,
+				CF00000000000000000029 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CF00000000000000000033 /* Build configuration list for PBXNativeTarget "QuickLookPreview" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF00000000000000000034 /* Debug */,
+				CF00000000000000000035 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

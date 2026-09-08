@@ -305,6 +305,136 @@ struct DiskHeaderSheet: View {
     }
 }
 
+// MARK: - Repair
+
+/// The report a repair shows before it writes anything: what is wrong, and
+/// then what it is about to do about it. A disk it cannot put entirely right
+/// gets the first half and a reason, and the button stays out of reach.
+struct RepairSheet: View {
+    let plan: DiskRepairPlan
+    let diskName: String
+    let palette: Palette
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        DialogFrame(title: "Repair \(diskName)",
+                    palette: palette,
+                    confirmTitle: "Repair",
+                    confirmDisabled: !plan.canRepair || plan.isClean,
+                    onCancel: onCancel,
+                    onConfirm: onConfirm) {
+            VStack(alignment: .leading, spacing: 12) {
+                if plan.isClean {
+                    line("\(plan.filesChecked) file\(plan.filesChecked == 1 ? "" : "s") checked. "
+                         + "The BAM agrees with them and every block count is right.")
+                    line("\(plan.blocksFreeBefore) blocks free.", dim: true)
+                } else {
+                    section("Found")
+                    findings
+                    if plan.canRepair {
+                        section("Will change")
+                        changes
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: What is wrong
+
+    @ViewBuilder
+    private var findings: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            line("\(plan.filesChecked) file\(plan.filesChecked == 1 ? "" : "s") checked.", dim: true)
+
+            // The two that stop a repair come first, since they are the reason
+            // the button is disabled and everything below them is moot.
+            ForEach(Array(plan.collisions.prefix(4).enumerated()), id: \.offset) { _, clash in
+                line("Track \(clash.track) sector \(clash.sector) is claimed by "
+                     + clash.claimedBy.joined(separator: " and ") + ".", bad: true)
+            }
+            if plan.collisions.count > 4 {
+                line("\(plan.collisions.count - 4) more shared sectors.", bad: true)
+            }
+            ForEach(Array(plan.brokenChains.prefix(4).enumerated()), id: \.offset) { _, name in
+                line("\"\(name)\" has a block chain that leaves the disk or turns back on itself.",
+                     bad: true)
+            }
+
+            if !plan.splatToScratch.isEmpty {
+                line("\(plan.splatToScratch.count) unclosed file\(plan.splatToScratch.count == 1 ? "" : "s"): "
+                     + plan.splatToScratch.prefix(4).map { "\"\($0)\"" }.joined(separator: ", ")
+                     + (plan.splatToScratch.count > 4 ? " and more" : "") + ".")
+            }
+            if !plan.wrongCounts.isEmpty {
+                line("\(plan.wrongCounts.count) block count\(plan.wrongCounts.count == 1 ? "" : "s") "
+                     + "disagree with the file: "
+                     + plan.wrongCounts.prefix(3)
+                        .map { "\"\($0.name)\" says \($0.statedBlocks), is \($0.actualBlocks)" }
+                        .joined(separator: ", ") + ".")
+            }
+            if plan.toFree > 0 {
+                line("\(plan.toFree) sector\(plan.toFree == 1 ? " is" : "s are") allocated and used by nothing.")
+            }
+            if plan.toAllocate > 0 {
+                line("\(plan.toAllocate) sector\(plan.toAllocate == 1 ? " is" : "s are") in use and marked free.")
+            }
+            if plan.badFreeCounts > 0 {
+                line("\(plan.badFreeCounts) track\(plan.badFreeCounts == 1 ? "" : "s") "
+                     + "count free sectors they do not have, which is why this disk "
+                     + "claims \(plan.blocksFreeBefore) blocks free.")
+            }
+            if !plan.canRepair {
+                line("Nothing will be written. A shared sector or a broken chain is damage "
+                     + "the BAM cannot describe, and guessing at it would lose a file rather "
+                     + "than save one.", dim: true)
+            }
+        }
+    }
+
+    // MARK: What it will do
+
+    @ViewBuilder
+    private var changes: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !plan.splatToScratch.isEmpty {
+                line("Scratch \(plan.splatToScratch.count) unclosed file"
+                     + "\(plan.splatToScratch.count == 1 ? "" : "s"), as VALIDATE does.")
+            }
+            if !plan.wrongCounts.isEmpty {
+                line("Correct \(plan.wrongCounts.count) block count\(plan.wrongCounts.count == 1 ? "" : "s").")
+            }
+            if plan.toFree > 0 || plan.toAllocate > 0 || plan.badFreeCounts > 0 {
+                line("Rebuild the BAM: free \(plan.toFree), allocate \(plan.toAllocate)"
+                     + (plan.badFreeCounts > 0 ? ", and write every track's free count afresh" : "")
+                     + ".")
+            }
+            line("Blocks free: \(plan.blocksFreeBefore) → \(plan.blocksFreeAfter).", dim: true)
+            line("The image is only changed in memory until it is saved.", dim: true)
+        }
+    }
+
+    // MARK: Pieces
+
+    private func section(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 9, weight: .semibold))
+            .tracking(0.8)
+            .foregroundStyle(palette.color(.dim))
+    }
+
+    private func line(_ text: String, dim: Bool = false, bad: Bool = false) -> some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(bad ? palette.color(.marked)
+                                 : (dim ? palette.color(.dim) : palette.color(.text)))
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 // MARK: - Viewer
 
 enum ViewerMode: String, CaseIterable, Identifiable {
@@ -586,6 +716,9 @@ struct HelpSheet: View {
             ("⌥⌘R", "Show in Finder"),
             ("⇧⌘.", "Show or hide hidden files"),
             ("Right click", "All of these, plus Open With"),
+            ("Drag", "Between the panels, or to and from the Finder"),
+            ("", "One volume moves, two copy; an image counts as its own"),
+            ("⌥ Drag", "Copy where it would move, and move where it would copy"),
         ]),
         Section(title: "Viewing", rows: [
             ("F3", "View the file under the cursor"),

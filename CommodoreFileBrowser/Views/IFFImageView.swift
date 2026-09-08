@@ -47,7 +47,7 @@ struct IFFImagePane: View {
         ScrollView([.vertical, .horizontal]) {
             if let decoded {
                 let scale = CGFloat(zoom)
-                Image(nsImage: decoded.image)
+                Image(nsImage: PixelImage.image(decoded.image))
                     .resizable()
                     .interpolation(.none)
                     .frame(width: CGFloat(decoded.width) * scale,

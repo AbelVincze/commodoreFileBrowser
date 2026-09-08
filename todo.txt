@@ -1,7 +1,6 @@
 TODO:
 keyboard nav in VIEW (Copy hex data as text)
 
-- drag'n'drop (in and out) like in finder (same vol move, diff vol copy by defualt, modofier changes it)
 
 - set color for oscilloscope video export
 - set bg color of oscilloscope in modal
@@ -17,5 +16,4 @@ keyboard nav in VIEW (Copy hex data as text)
 mass file rename
 dir ordering (c64 images) + del file
 file size display
-repair dir (real file size, bam, remove 0 byte files (*))
 file name entering, petscii input

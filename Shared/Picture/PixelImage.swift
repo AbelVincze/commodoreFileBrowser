@@ -17,21 +17,25 @@ enum PixelImage {
     /// `rgba` is `width * height * 4` bytes, premultiplied, row major from the
     /// top left. Nearest neighbour, since these are pictures drawn a pixel at a
     /// time and smoothing them is a lie about how much detail is there.
-    static func make(rgba: [UInt8], width: Int, height: Int) -> NSImage? {
+    static func make(rgba: [UInt8], width: Int, height: Int) -> CGImage? {
         guard width > 0, height > 0, width * height <= pixelLimit,
               rgba.count >= width * height * 4 else { return nil }
 
-        guard let provider = CGDataProvider(data: Data(rgba) as CFData),
-              let cg = CGImage(width: width, height: height,
-                               bitsPerComponent: 8, bitsPerPixel: 32,
-                               bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                               bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-                               provider: provider, decode: nil, shouldInterpolate: false,
-                               intent: .defaultIntent)
-        else { return nil }
+        guard let provider = CGDataProvider(data: Data(rgba) as CFData) else { return nil }
+        return CGImage(width: width, height: height,
+                       bitsPerComponent: 8, bitsPerPixel: 32,
+                       bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false,
+                       intent: .defaultIntent)
+    }
 
+    /// The same wrapped for AppKit. A `CGImage` is what the thumbnail extension
+    /// draws with and an `NSImage` is what a SwiftUI `Image` takes, so the
+    /// picture is built once as the former and dressed as the latter here.
+    static func image(_ cg: CGImage) -> NSImage {
         let rep = NSBitmapImageRep(cgImage: cg)
-        rep.size = NSSize(width: width, height: height)
+        rep.size = NSSize(width: cg.width, height: cg.height)
         let image = NSImage(size: rep.size)
         image.addRepresentation(rep)
         return image
@@ -40,9 +44,7 @@ enum PixelImage {
     /// An opaque PNG of an image built here, for the viewer's Save button.
     /// Unlike the bitmap viewer's, this needs no foreground and background:
     /// the colours are already in the pixels.
-    static func pngData(_ image: NSImage) -> Data? {
-        guard let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff) else { return nil }
-        return rep.representation(using: .png, properties: [:])
+    static func pngData(_ cg: CGImage) -> Data? {
+        NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
     }
 }

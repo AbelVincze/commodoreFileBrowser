@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 enum PanelLayout {
     /// Shared by the header, the rules and the rows so the listing lines up
@@ -190,6 +191,7 @@ struct PanelView: View {
                                  isCursor: item.id == panel.cursor,
                                  isActive: isActive,
                                  isMarked: panel.marked.contains(item.id),
+                                 isDropTarget: panel.dropHighlight == .row(item.id),
                                  palette: palette,
                                  font: settings.font,
                                  zoom: settings.zoom,
@@ -198,6 +200,11 @@ struct PanelView: View {
                             .id(item.id)
                             .contentShape(Rectangle())
                             .onTapGesture { click(item) }
+                            .simultaneousGesture(dragGesture(for: item))
+                            // A row that names a folder takes the drop into it.
+                            .onDrop(of: [.fileURL],
+                                    delegate: PanelDropDelegate(model: model, panel: panel,
+                                                                row: item))
                             .contextMenu {
                                 RowContextMenu(model: model, panel: panel, item: item)
                             }
@@ -213,6 +220,34 @@ struct PanelView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Everywhere in the listing that is not a folder row — past the last
+        // one, or in the margins beside them — drops into the folder the panel
+        // is showing, the way the empty part of a Finder window does. It goes
+        // on after the frame so that the whole column answers, not just the
+        // rows' own height.
+        .contentShape(Rectangle())
+        .onDrop(of: [.fileURL],
+                delegate: PanelDropDelegate(model: model, panel: panel, row: nil))
+        .overlay {
+            // Drawn around the whole listing when the drop would land in the
+            // folder it is showing rather than on a folder row inside it.
+            if panel.dropHighlight == .panel {
+                // Full width, so the cursor row — which runs edge to edge —
+                // stops at it rather than passing over it.
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(palette.color(.accent), lineWidth: 2)
+                    .padding(.vertical, 1)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    /// Six points of travel with the button down means a drag rather than a
+    /// click. The gesture only says when: from there AppKit owns the mouse and
+    /// runs the session to its own end.
+    private func dragGesture(for item: PanelItem) -> some Gesture {
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
+            .onChanged { _ in model.beginDrag(from: panel, row: item) }
     }
 
     // MARK: - Footer
@@ -247,6 +282,8 @@ struct PanelRow: View {
     let isCursor: Bool
     let isActive: Bool
     let isMarked: Bool
+    /// A drag is hovering over this row and would go into the folder it names.
+    let isDropTarget: Bool
     let palette: Palette
     /// Taken by value, not read off the settings store. A store is a reference,
     /// so SwiftUI sees an unchanged input and skips redrawing the row; changing
@@ -270,6 +307,7 @@ struct PanelRow: View {
     }
 
     private var background: Color {
+        if isDropTarget { return palette.color(.accent).opacity(0.22) }
         guard isCursor else { return .clear }
         return isActive ? palette.color(.cursorBackground) : palette.color(.cursorBackground).opacity(0.22)
     }
@@ -341,6 +379,13 @@ struct PanelRow: View {
         .frame(height: rowHeight, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(background)
+        .overlay {
+            if isDropTarget {
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(palette.color(.accent), lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .leading) {
             // Sits inside the leading padding, so it never shifts the listing.
             if isMarked {

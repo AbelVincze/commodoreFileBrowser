@@ -2545,8 +2545,10 @@ do {
     check(verdict(A, B, nil)?.kind == .conflictChangedAndDeleted(changed: .left),
           "changed here and deleted there is a conflict, not a deletion")
     check(verdict(A, nil, nil) == nil, "gone from both sides is simply gone")
-    check(verdict(nil, A, entry("f", "", dir: true))?.kind == .conflictTypeMismatch,
+    check(verdict(nil, A, entry("f", "", dir: true))?.kind == .conflictTypeMismatch(folderOn: .right),
           "a folder on one side and a file on the other is never resolved on its own")
+    check(verdict(nil, entry("f", "", dir: true), A)?.kind == .conflictTypeMismatch(folderOn: .left),
+          "and the verdict says which side holds the folder")
 
     // Deletions switched off change the suggestion and nothing else.
     check(verdict(A, A, nil, deletions: false)?.kind == .deletedOnRight,
@@ -2554,6 +2556,54 @@ do {
     check(verdict(A, A, nil, deletions: false)?.action == .skip, "but nothing is suggested")
     check(verdict(A, A, nil, deletions: false)?.allowed.allMatch { !$0.isDestructive } == true,
           "and the row will not even offer one")
+
+    // --- every verdict says which side the change was made on
+    //
+    // The report exists to answer "which of these two folders moved", so a
+    // verdict that leaves the side to be worked out from the suggested action
+    // is asking the reader to reason backwards from the fix to the fact.
+    let everyKind: [SyncKind] = [
+        .newOnLeft, .newOnRight, .changedOnLeft, .changedOnRight,
+        .deletedOnLeft, .deletedOnRight, .renamedOnLeft, .renamedOnRight,
+        .conflictBothChanged, .conflictBothAdded, .conflictBothRenamed,
+        .conflictChangedAndDeleted(changed: .left),
+        .conflictChangedAndDeleted(changed: .right),
+        .conflictCaseOnly(side: .left), .conflictTypeMismatch(folderOn: .left),
+        .possibleRename, .unreadable(side: .left), .unreadable(side: nil),
+    ]
+    let sideless = everyKind.filter { kind in
+        let l = kind.label.lowercased()
+        return !l.contains("left") && !l.contains("right") && !l.contains("both")
+    }
+    check(sideless.map(\.label) == ["Maybe renamed"],
+          "every verdict but the one that genuinely cannot know names a side — \(sideless.map(\.label))")
+    check(SyncKind.renamedOnLeft.label != SyncKind.renamedOnRight.label,
+          "a rename says which side it happened on")
+    check(SyncKind.conflictChangedAndDeleted(changed: .left).label
+          != SyncKind.conflictChangedAndDeleted(changed: .right).label,
+          "and so does a file changed on one side and deleted on the other")
+    check(SyncKind.conflictTypeMismatch(folderOn: .left).label
+          != SyncKind.conflictTypeMismatch(folderOn: .right).label,
+          "and so does a folder meeting a file")
+    check(SyncKind.unreadable(side: .left).label != SyncKind.unreadable(side: .right).label,
+          "and so does something that could not be read")
+    check(SyncProblem(side: .right, path: "x", cause: .symbolicLink).text.contains("right"),
+          "and the list of what was left alone says which folder each path was in")
+
+    // "Maybe renamed" cannot name a side — that is what makes it a maybe — so
+    // its note has to carry both names and say where each one is.
+    var maybeL = SyncScan(root: left), maybeR = SyncScan(root: right)
+    maybeL.entries = ["here.txt": entry("here.txt", "aaa")]
+    maybeR.entries = ["there.txt": entry("there.txt", "aaa")]
+    let maybe = SyncEngine.plan(left: maybeL, right: maybeR, baseline: nil,
+                                propagateDeletions: true)
+    let maybeRow = maybe.rows.first { $0.kind == .possibleRename }
+    check(maybeRow != nil, "the same content under two names with no record is a maybe")
+    check(maybeRow?.note?.contains("here.txt on the left") == true
+          && maybeRow?.note?.contains("there.txt on the right") == true,
+          "and its note says which name is on which side")
+    check(maybeRow?.leftName == "here.txt" && maybeRow?.rightName == "there.txt",
+          "with both names recorded against their sides, so renaming either way works")
 
     // --- a first run proposes no deletion anywhere
     let freshLeft = root.appendingPathComponent("fresh-left")
@@ -2632,8 +2682,11 @@ do {
                                     baseline: ["locked/a.txt": entry("locked/a.txt", "aaa")],
                                     propagateDeletions: true)
     check(blindPlan.blind, "and the report says it is incomplete")
-    check(blindPlan.rows.filter { $0.path.hasPrefix("locked/") }.allMatch { $0.kind == .unreadable },
+    check(blindPlan.rows.filter { $0.path.hasPrefix("locked/") }
+              .allMatch { if case .unreadable = $0.kind { return true } else { return false } },
           "nothing under it is given a verdict")
+    check(blindPlan.rows.first(where: { $0.path.hasPrefix("locked/") })?.kind
+          == .unreadable(side: .right), "and the verdict says which side could not be read")
     check(blindPlan.rows.allMatch { !$0.action.isDestructive },
           "and nothing under it is proposed for deletion")
     try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lockedDir.path)
@@ -2671,6 +2724,31 @@ do {
           "and afterwards the two sides hold the same paths")
     check(outcome.baseline["fresh.txt"] != nil, "what was applied is written down as agreed")
     check(inode != nil, "the rename source had an inode to compare")
+
+    // --- renaming across, when the two names are on opposite sides
+    for direction in [SyncAction.renameOnRight, SyncAction.renameOnLeft] {
+        let mL = root.appendingPathComponent("maybe-l-\(direction.rawValue)")
+        let mR = root.appendingPathComponent("maybe-r-\(direction.rawValue)")
+        try put("twinned", "left-name.txt", in: mL)
+        try put("twinned", "right-name.txt", in: mR)
+        var mPlan = SyncEngine.plan(left: try scan(mL), right: try scan(mR),
+                                    baseline: nil, propagateDeletions: false)
+        check(mPlan.rows.count == 1, "two names for one content is one row")
+        mPlan.rows[0].action = direction
+        let outcome = SyncRunner.apply(mPlan.rows, leftRoot: mL, rightRoot: mR,
+                                       settled: mPlan.settled, carried: mPlan.carried,
+                                       baseline: [:], toTrash: false, cancel: cancel)
+        let wanted = direction == .renameOnRight ? "left-name.txt" : "right-name.txt"
+        let renamedSide = direction == .renameOnRight ? mR : mL
+        check(outcome.failures.isEmpty,
+              "renaming \(direction == .renameOnRight ? "the right" : "the left") succeeds"
+              + outcome.failures.map { " — \($0.error)" }.joined())
+        check(fm.fileExists(atPath: renamedSide.appendingPathComponent(wanted).path),
+              "and the side that was renamed takes the other's name")
+        let finalLeft = try scan(mL).entries.keys.sorted()
+        let finalRight = try scan(mR).entries.keys.sorted()
+        check(finalLeft == finalRight, "leaving both sides holding the same one name")
+    }
 
     // --- deletions, and the checkbox that governs them
     let delLeft = root.appendingPathComponent("del-left")

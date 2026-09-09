@@ -45,18 +45,21 @@ enum SyncEngine {
             // dropping it is itself a claim about what is there.
             if left.isBlind(path) || right.isBlind(path) {
                 if let b { carried[path] = b }
-                rows.append(row(path: path, kind: .unreadable, action: .skip,
+                let blindSide: PanelSide? = left.isBlind(path)
+                    ? (right.isBlind(path) ? nil : .left) : .right
+                let which = blindSide.map { "on the \($0.rawValue)" } ?? "on both sides"
+                rows.append(row(path: path, kind: .unreadable(side: blindSide), action: .skip,
                                 allowed: [.skip], l: l, r: r, b: b,
-                                note: "a folder on the way to this could not be read"))
+                                note: "a folder on the way to this could not be read \(which)"))
                 continue
             }
             // The same for a file whose bytes could not be taken: it is absent
             // from the scan but present on disk, and treating that as "not
             // there" is how a sync deletes the wrong side.
-            if let problem = unreadableProblem(path, left: left, right: right) {
+            if let trouble = trouble(at: path, left: left, right: right) {
                 if let b { carried[path] = b }
-                rows.append(row(path: path, kind: .unreadable, action: .skip,
-                                allowed: [.skip], l: l, r: r, b: b, note: problem))
+                rows.append(row(path: path, kind: trouble.kind, action: .skip,
+                                allowed: [.skip], l: l, r: r, b: b, note: trouble.note))
                 continue
             }
 
@@ -104,8 +107,11 @@ enum SyncEngine {
         // A folder on one side and a file on the other. Never resolved on its
         // own: resolving it means deleting a whole tree.
         if let l, let r, l.isDirectory != r.isDirectory {
-            return Verdict(kind: .conflictTypeMismatch, action: .skip, allowed: [.skip],
-                           note: "one side has a folder here and the other a file")
+            let folderOn: PanelSide = l.isDirectory ? .left : .right
+            return Verdict(kind: .conflictTypeMismatch(folderOn: folderOn), action: .skip,
+                           allowed: [.skip],
+                           note: "a folder on the \(folderOn.rawValue) and a file of the "
+                                 + "same name on the \(folderOn == .left ? "right" : "left")")
         }
 
         switch (b, l, r) {
@@ -220,11 +226,17 @@ enum SyncEngine {
                 guard news.count == 1, let olds = departed[hash], olds.count == 1 else { continue }
                 let newIndex = news[0], oldIndex = olds[0]
                 consumed.insert(oldIndex)
+                let oldPath = out[oldIndex].path
                 out[newIndex].kind = side == .left ? .renamedOnLeft : .renamedOnRight
-                out[newIndex].renamedFrom = out[oldIndex].path
+                out[newIndex].renamedFrom = oldPath
+                // The renamed side holds the new name; the other still holds
+                // the old one, which is what makes this a rename to carry over.
+                out[newIndex].leftName = side == .left ? out[newIndex].path : oldPath
+                out[newIndex].rightName = side == .left ? oldPath : out[newIndex].path
                 out[newIndex].action = side == .left ? .renameOnRight : .renameOnLeft
                 out[newIndex].allowed = [out[newIndex].action, .skip]
-                out[newIndex].note = nil
+                out[newIndex].note = "renamed on the \(side.rawValue), from \(oldPath)"
+                    + " — the \(side == .left ? "right" : "left") still has the old name"
             }
         }
 
@@ -245,12 +257,16 @@ enum SyncEngine {
                 else { continue }
                 let a = lefts[0], bIndex = rights[0]
                 consumed.insert(bIndex)
+                let onRight = out[bIndex].path
                 out[a].kind = .possibleRename
-                out[a].renamedFrom = out[bIndex].path
+                out[a].renamedFrom = onRight
+                out[a].leftName = out[a].path
+                out[a].rightName = onRight
                 out[a].action = .skip
-                out[a].allowed = [.skip, .renameOnRight, .renameOnLeft, .copyToRight, .copyToLeft]
-                out[a].note = "the same content under two names, and no record of "
-                            + "which came first"
+                out[a].allowed = [.skip, .renameOnRight, .renameOnLeft]
+                out[a].note = "\(out[a].path) on the left and \(onRight) on the right hold "
+                            + "the same content, and there is no record of which name came "
+                            + "first — \"rename right\" gives the right the left's name"
             }
         }
 
@@ -306,13 +322,25 @@ enum SyncEngine {
         return out
     }
 
-    private static func unreadableProblem(_ path: String,
-                                          left: SyncScan, right: SyncScan) -> String? {
-        for scan in [left, right] {
+    /// A file the scan could not make sense of, and which side it was on.
+    ///
+    /// A case collision gets a kind of its own rather than being folded in with
+    /// the unreadable ones: the file reads perfectly well, it is the pair of
+    /// names that cannot be told apart on a case-insensitive volume, and the
+    /// user needs to know which side has the pair.
+    private static func trouble(at path: String, left: SyncScan,
+                                right: SyncScan) -> (kind: SyncKind, note: String)? {
+        for (scan, side) in [(left, PanelSide.left), (right, PanelSide.right)] {
             for problem in scan.problems where problem.path == path {
-                if case .unreadable(let why) = problem.cause { return "could not be read: \(why)" }
-                if case .caseCollision(let other) = problem.cause {
-                    return "the same name as \(other) but for its case"
+                switch problem.cause {
+                case .unreadable(let why):
+                    return (.unreadable(side: side), "could not be read on the "
+                            + "\(side.rawValue): \(why)")
+                case .caseCollision(let other):
+                    return (.conflictCaseOnly(side: side), "on the \(side.rawValue) this and "
+                            + "\(other) differ only in case, which not every volume can tell "
+                            + "apart")
+                default: continue
                 }
             }
         }

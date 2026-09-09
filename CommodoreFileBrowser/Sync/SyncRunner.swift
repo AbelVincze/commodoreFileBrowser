@@ -101,16 +101,21 @@ enum SyncRunner {
             result.baseline[row.path] = stamped(expected, at: target)
 
         case .renameOnRight, .renameOnLeft:
-            guard let from = row.renamedFrom else { return }
+            // Renaming a side means giving it the name the other side uses, so
+            // both names are read off the row rather than worked out from which
+            // of `path` and `renamedFrom` is which here.
             let onRight = row.action == .renameOnRight
+            guard let from = onRight ? row.rightName : row.leftName,
+                  let to = onRight ? row.leftName : row.rightName,
+                  from != to else { return }
             let root = onRight ? rightRoot : leftRoot
             let old = url(root, from)
-            let new = url(root, row.path)
+            let new = url(root, to)
             try fm.createDirectory(at: new.deletingLastPathComponent(),
                                    withIntermediateDirectories: true)
             try fm.moveItem(at: old, to: new)
             result.baseline.removeValue(forKey: from)
-            result.baseline[row.path] = stamped(row.left ?? row.right, at: new)
+            result.baseline[to] = stamped(row.left ?? row.right, at: new)
 
         case .deleteLeft, .deleteRight:
             let onLeft = row.action == .deleteLeft

@@ -92,12 +92,15 @@ struct SyncProblem: Equatable {
     var cause: Cause
 
     var text: String {
+        // Named by side for the same reason the verdicts are: a path on its own
+        // does not say which of the two folders it was found in.
+        let where_ = side.map { "\($0.rawValue): " } ?? ""
         switch cause {
-        case .unreadable(let why): return "\(path) — could not be read: \(why)"
-        case .unlistable(let why): return "\(path) — could not be listed: \(why)"
-        case .symbolicLink: return "\(path) — a symbolic link, left alone"
+        case .unreadable(let why): return "\(where_)\(path) — could not be read: \(why)"
+        case .unlistable(let why): return "\(where_)\(path) — could not be listed: \(why)"
+        case .symbolicLink: return "\(where_)\(path) — a symbolic link, left alone"
         case .caseCollision(let other):
-            return "\(path) — the same name as \(other) but for its case"
+            return "\(where_)\(path) — the same name as \(other) but for its case"
         }
     }
 }
@@ -113,13 +116,16 @@ enum SyncKind: Equatable {
     /// One side edited it, the other threw it away.
     case conflictChangedAndDeleted(changed: PanelSide)
     case conflictBothRenamed
-    case conflictCaseOnly
-    case conflictTypeMismatch
+    /// Two names on one side that a case-insensitive volume cannot tell apart.
+    case conflictCaseOnly(side: PanelSide)
+    /// A folder on one side, a file of the same name on the other.
+    case conflictTypeMismatch(folderOn: PanelSide)
     /// First run: the same bytes under two names, and nothing anywhere to say
     /// which of them is the newer.
     case possibleRename
-    /// Could not be hashed, or lives under a folder that would not open.
-    case unreadable
+    /// Could not be hashed, or lives under a folder that would not open. The
+    /// side is nil when neither could be read.
+    case unreadable(side: PanelSide?)
 
     var isConflict: Bool {
         switch self {
@@ -131,23 +137,41 @@ enum SyncKind: Equatable {
     }
 
     /// For the sheet's verdict column.
+    ///
+    /// Every one of these names the side the change was made on, because that
+    /// is the whole question the report is answering: not *that* the two
+    /// folders differ — the user can see that — but which of them moved, and
+    /// therefore which way the difference should travel. A verdict that says
+    /// "Renamed" and leaves the side to the action menu is asking the reader to
+    /// work backwards from the fix to the fact.
+    ///
+    /// The direction the row will be applied in is the action menu's business
+    /// and is deliberately not repeated here.
     var label: String {
         switch self {
-        case .newOnLeft: return "New →"
-        case .newOnRight: return "← New"
-        case .changedOnLeft: return "Changed →"
-        case .changedOnRight: return "← Changed"
-        case .deletedOnLeft: return "Deleted here"
-        case .deletedOnRight: return "Deleted there"
-        case .renamedOnLeft, .renamedOnRight: return "Renamed"
-        case .conflictBothChanged: return "Both changed"
-        case .conflictBothAdded: return "Both added"
-        case .conflictChangedAndDeleted: return "Changed / deleted"
-        case .conflictBothRenamed: return "Both renamed"
-        case .conflictCaseOnly: return "Same but for case"
-        case .conflictTypeMismatch: return "File / folder"
+        case .newOnLeft: return "New on left"
+        case .newOnRight: return "New on right"
+        case .changedOnLeft: return "Changed on left"
+        case .changedOnRight: return "Changed on right"
+        case .deletedOnLeft: return "Deleted on left"
+        case .deletedOnRight: return "Deleted on right"
+        case .renamedOnLeft: return "Renamed on left"
+        case .renamedOnRight: return "Renamed on right"
+        case .conflictBothChanged: return "Changed on both"
+        case .conflictBothAdded: return "Added on both"
+        case .conflictBothRenamed: return "Renamed on both"
+        case .conflictChangedAndDeleted(let changed):
+            return changed == .left ? "Changed left, deleted right"
+                                    : "Changed right, deleted left"
+        case .conflictCaseOnly(let side): return "Name clash on \(side.rawValue)"
+        case .conflictTypeMismatch(let folderOn):
+            return folderOn == .left ? "Folder left, file right"
+                                     : "Folder right, file left"
         case .possibleRename: return "Maybe renamed"
-        case .unreadable: return "Unreadable"
+        case .unreadable(let side):
+            // Nil means neither side could be read. Saying so beats saying
+            // nothing: "Unreadable" alone reads as though one side were fine.
+            return side.map { "Unreadable on \($0.rawValue)" } ?? "Unreadable on both"
         }
     }
 
@@ -198,6 +222,15 @@ struct SyncDifference: Identifiable, Equatable {
     /// For a rename this is the new path; `renamedFrom` holds the old one.
     var path: String
     var renamedFrom: String?
+    /// On a rename row, the name each side currently holds.
+    ///
+    /// `renamedFrom` and `path` read well — old name, new name — but they do
+    /// not say which folder each is in, and on a "maybe renamed" row the two
+    /// names are on opposite sides. Renaming a side means moving the name it
+    /// has to the name the other one has, so both are recorded plainly rather
+    /// than inferred from the kind.
+    var leftName: String?
+    var rightName: String?
     var kind: SyncKind
     /// The suggestion. The user may pick anything in `allowed`.
     var action: SyncAction

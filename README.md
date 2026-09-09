@@ -280,6 +280,18 @@ carries a menu of the actions that are legal for it, seeded with a suggestion
 you can override. *All…* sets every row at once. The footer says the shape of
 what will happen before it happens: `4 → · 1 ← · 2 renamed · 1 to the Trash`.
 
+**Every verdict names the side the change was made on** — "Renamed on left",
+"Changed on right", "Deleted on left", "Changed left, deleted right", "Folder
+left, file right", "Unreadable on right". That is the question the report
+exists to answer: not *that* the two folders differ, which is plain enough, but
+which of them moved, and therefore which way the difference should travel. The
+action menu says what will be done about it, and does not repeat the fact.
+
+The single exception is **Maybe renamed**, which cannot name a side and says so:
+with no record of an earlier sync, the same content under two names carries no
+evidence about which name came first. Its note gives both names and where each
+one is, and it proposes nothing.
+
 Symbolic links are skipped rather than followed, and counted at the bottom.
 A `.app` and its kind are compared and copied whole rather than entered, so a
 change anywhere inside one re-copies all of it — which is what the Finder does

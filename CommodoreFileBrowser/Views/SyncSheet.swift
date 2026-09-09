@@ -36,7 +36,7 @@ struct SyncSheet: View {
             Divider().overlay(palette.color(.border))
             footer
         }
-        .frame(width: 760, height: 620)
+        .frame(width: 820, height: 620)
         .background(palette.color(.window))
         .onChange(of: plan?.id) { _, _ in rows = plan?.rows ?? [] }
         .onAppear { rows = plan?.rows ?? [] }
@@ -191,8 +191,11 @@ struct SyncSheet: View {
                 Text(row.kind.label)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(alarming ? palette.color(.marked) : palette.color(.accent))
-                    .frame(width: 104, alignment: .leading)
-                Text(row.renamedFrom.map { "\($0)  →  \(row.path)" } ?? row.path)
+                    // Wide enough for the longest verdict there is, "Changed
+                    // left, deleted right", on one line: a verdict that wraps
+                    // or truncates is one that stops saying where.
+                    .frame(width: 158, alignment: .leading)
+                Text(pathText(row))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(palette.color(.text))
                     .lineLimit(1)
@@ -212,7 +215,7 @@ struct SyncSheet: View {
                     .font(.system(size: 9))
                     .foregroundStyle(palette.color(.dim))
                     .lineLimit(2)
-                    .padding(.leading, 112)
+                    .padding(.leading, 166)
             }
         }
         .padding(.horizontal, 16)
@@ -222,6 +225,17 @@ struct SyncSheet: View {
         .background(row.kind.isConflict
                     ? palette.color(.marked).opacity(0.12)
                     : (banded ? palette.color(.panel).opacity(0.5) : Color.clear))
+    }
+
+    /// A rename's two names, shown so it is clear whether they sit on one side
+    /// or on opposite ones.
+    private func pathText(_ row: SyncDifference) -> String {
+        if case .possibleRename = row.kind, let l = row.leftName, let r = row.rightName {
+            // Not an arrow: nothing has moved, and neither name is the older.
+            return "\(l)  ⇄  \(r)"
+        }
+        if let from = row.renamedFrom { return "\(from)  →  \(row.path)" }
+        return row.path
     }
 
     private var firstRunNotice: some View {

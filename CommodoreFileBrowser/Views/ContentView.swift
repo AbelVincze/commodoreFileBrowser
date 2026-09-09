@@ -38,6 +38,19 @@ struct ContentView: View {
             }
         }
         .ignoresSafeArea()
+        // Everywhere that is not one of the two columns. The columns register
+        // their own targets and are inside this one, so they answer first;
+        // what is left is the title band, the key bar and the strip the panel
+        // headers and footers sit on.
+        .onDrop(of: [.fileURL], delegate: WindowDropDelegate(model: model))
+        .overlay {
+            if model.isWindowDropTarget {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(palette.color(.accent), lineWidth: 3)
+                    .allowsHitTesting(false)
+                    .ignoresSafeArea()
+            }
+        }
         .background(WindowStyler(background: palette.color(.window), scheme: scheme))
         .preferredColorScheme(settings.appearance.colorScheme)
         .onAppear(perform: installKeyMonitor)

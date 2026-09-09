@@ -344,3 +344,54 @@ struct PanelDropDelegate: DropDelegate {
         return PanelItem(id: id, kind: kind, title: url.lastPathComponent, detail: "", url: url)
     }
 }
+
+
+/// The rest of the window: everywhere a drag can land that is not one of the
+/// two columns — the title band, the key bar, the strip a panel's header and
+/// footer sit on.
+///
+/// A file let go there is not being put anywhere. It is being handed to the
+/// browser to look at, the way a document dropped on an application is, so the
+/// panel goes to it and opens it for what it is.
+struct WindowDropDelegate: DropDelegate {
+
+    let model: AppModel
+
+    /// The files another application is holding over the window. Our own rows
+    /// are being carried somewhere rather than handed over, so a drag that
+    /// started here is not one of these.
+    private var urls: [URL] {
+        guard model.dragCoordinator.session == nil else { return [] }
+        return model.dragCoordinator.externalURLs()
+    }
+
+    private var accepts: Bool { !model.isPresentingModal && !urls.isEmpty }
+
+    func validateDrop(info: DropInfo) -> Bool { accepts }
+
+    func dropEntered(info: DropInfo) { show(accepts) }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let accepts = accepts
+        show(accepts)
+        return DropProposal(operation: accepts ? .copy : .forbidden)
+    }
+
+    func dropExited(info: DropInfo) { show(false) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        show(false)
+        let dropped = urls
+        guard !dropped.isEmpty else { return false }
+        // Read the pasteboard before retiring it, as a drop into a column does.
+        model.dragCoordinator.retireDrag()
+        // And off the drag's own call stack for the same reason: this one
+        // navigates and may put a sheet up.
+        DispatchQueue.main.async { model.openDropped(dropped) }
+        return true
+    }
+
+    private func show(_ targeted: Bool) {
+        if model.isWindowDropTarget != targeted { model.isWindowDropTarget = targeted }
+    }
+}

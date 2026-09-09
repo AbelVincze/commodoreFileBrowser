@@ -3493,6 +3493,65 @@ do {
 
     // --- Stepping through tunes with a player sheet up ------------------
     //
+    // A file let go on the window rather than on either column: the panel goes
+    // to it and opens it for what it is.
+    do {
+        model.activeSide = .left
+        let dropped = root.appendingPathComponent("dropped")
+        try fm.createDirectory(at: dropped, withIntermediateDirectories: true)
+
+        // An image is a place: the panel goes inside it, not to the folder
+        // holding it.
+        model.openDropped([imageURL])
+        check(model.left.location == .image(imageURL), "a disk image dropped on the window is listed")
+        check(model.left.image != nil, "with the image itself open")
+
+        // A folder is a place too.
+        model.openDropped([dirA])
+        check(model.left.location.url?.path == dirA.path, "a folder dropped on the window is opened")
+
+        // A picture is shown. 10003 bytes loading at $6000 is a Koala.
+        var koala = Data([0x00, 0x60])
+        koala.append(Data(repeating: 0x55, count: 10001))
+        let picture = dropped.appendingPathComponent("art.koa")
+        try koala.write(to: picture)
+        model.openDropped([picture])
+        check(model.left.location.url?.path == dropped.path, "a picture opens the folder holding it")
+        check(model.left.currentItem?.title == "art.koa", "with the cursor on the file that was dropped")
+        check(model.sheet?.id.hasPrefix("viewer") == true, "and shows the picture")
+        model.sheet = nil
+
+        // A tune is played.
+        var psid = Data("PSID".utf8)
+        psid.append(contentsOf: [0x00, 0x02, 0x00, 0x7C, 0x00, 0x76,
+                                 0x10, 0x00, 0x10, 0x00, 0x10, 0x03,
+                                 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])
+        psid.append(Data(repeating: 0x20, count: 96))
+        psid.append(Data(repeating: 0xEA, count: 2048))
+        let tune = dropped.appendingPathComponent("song.sid")
+        try psid.write(to: tune)
+        model.openDropped([tune])
+        check(model.sheet?.id == "player", "a tune dropped on the window is played")
+        check(model.left.currentItem?.title == "song.sid", "with the cursor on it")
+        model.player.stop()
+        model.sheet = nil
+
+        // Anything else is left under the cursor, saying what it is not.
+        let plain = dropped.appendingPathComponent("notes.txt")
+        try Data("nothing to see".utf8).write(to: plain)
+        model.openDropped([plain])
+        check(model.sheet == nil, "a file that is neither opens no sheet")
+        check(model.left.currentItem?.title == "notes.txt", "but is still selected in its folder")
+        check(!model.statusMessage.isEmpty, "and the status line says why nothing opened")
+        model.statusMessage = ""
+
+        // And a drop is refused outright while a dialog is up.
+        model.sheet = .help
+        model.openDropped([imageURL])
+        check(model.left.location.url?.path == dropped.path, "a drop is ignored while a dialog is up")
+        model.sheet = nil
+    }
+
     // An alert cannot be seen while a sheet is up, and one pending swallows
     // every key, so a failure raised here used to leave ⌘↑ and ⌘↓ dead and
     // the message waiting to spring out when the sheet was closed.

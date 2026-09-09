@@ -124,6 +124,11 @@ final class AppModel: ObservableObject {
         return image
     }
 
+    /// True while a drag from another application is over the window but not
+    /// over either column, where letting it go opens the file rather than
+    /// putting it anywhere.
+    @Published var isWindowDropTarget = false
+
     /// Whether the open image has a directory whose order can be rearranged.
     /// Kept here rather than read off the panel when the menu is drawn: the
     /// menu is rebuilt from what it observes on this object, and the panels
@@ -608,6 +613,45 @@ final class AppModel: ObservableObject {
             // the same "Return found nothing to do here" as a file that is not
             // a tune, and it says which part it could not read.
             statusMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    // MARK: - A file dropped on the window
+
+    /// A file let go over the window but not over either column. Nothing is
+    /// copied anywhere: the panel is taken to the file and opens it for what
+    /// it is, which is what dropping a document on an application asks for.
+    func openDropped(_ urls: [URL]) {
+        guard !isPresentingModal, let url = urls.first else { return }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return }
+
+        if isDirectory.boolValue {
+            activePanel.navigate(to: .directory(url))
+            return
+        }
+        // An image is a place rather than a file, so the panel goes straight
+        // inside it instead of stopping in the folder to point at it.
+        if DiskImageFactory.isImage(url) {
+            activePanel.navigate(to: .image(url))
+            return
+        }
+        activePanel.navigate(to: .directory(url.deletingLastPathComponent()),
+                             focusOn: url.lastPathComponent)
+        // A file the listing does not show — a hidden one, with hidden files
+        // turned off — leaves the panel in its folder and nothing more.
+        guard let item = activePanel.currentItem, item.title == url.lastPathComponent else { return }
+        openForItsKind(item)
+    }
+
+    /// Show a picture, play a tune, a module or a sample, and leave anything
+    /// else sitting under the cursor with the same hint Return would give.
+    private func openForItsKind(_ item: PanelItem) {
+        guard let payload = try? read(item, from: activePanel) else { return }
+        if PictureLoader.detect(name: item.title, bytes: [UInt8](payload.data)) != nil {
+            beginView()
+        } else {
+            beginPlay(manual: false, requireTune: true)
         }
     }
 

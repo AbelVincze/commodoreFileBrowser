@@ -69,6 +69,11 @@ struct CommodoreFileBrowserApp: App {
                 Divider()
                 Button("Copy to Other Panel") { model.beginTransfer(isMove: false) }
                 Button("Move to Other Panel") { model.beginTransfer(isMove: true) }
+                // The third thing done to the two panels as a pair, so it sits
+                // with the other two rather than in a menu of its own.
+                Button("Sync Folders…") { model.beginSyncFolders() }
+                    .keyboardShortcut("s", modifiers: [.shift, .command])
+                Divider()
                 Button("Rename…") { model.beginRename() }
                     .keyboardShortcut("r", modifiers: .command)
                 Button("Delete") { model.beginDelete() }

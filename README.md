@@ -52,6 +52,9 @@ derived data, from Xcode and from the command line alike.
   since none of those files says what it is.
 * Directories rendered from a real character ROM, so PETSCII box-drawing comes
   out the way a 1541 prints it.
+* Sync two folders recursively, comparing by content so a rename reads as a
+  rename — with a record of the last sync, so a folder that changed on both
+  sides is merged rather than overwritten.
 
 **Playing music**
 
@@ -123,6 +126,7 @@ because the names are never converted to ASCII for display.
 | `F4` | edit the disk header |
 | `F5` | copy to the other panel |
 | `F6` | move to the other panel |
+| `⇧⌘S` | compare and sync the two panels' folders |
 | `⇧F6` / `⌘R` | rename |
 | `F7` | new folder |
 | `F8` | delete |
@@ -193,6 +197,99 @@ go of for a few seconds and redraws itself the moment one of them goes. Rows tha
 out to a temporary folder as the drag starts, since a directory entry is not a
 file until something makes one of it; a name already taken on the far side is
 left alone, and the status line says how many were skipped.
+
+## Syncing two folders
+
+`⇧⌘S` compares the two panels' folders, all the way down, and reports what they
+differ by. Both sides have to be ordinary Mac folders: a disk image is synced as
+a file, whole, and never entered — which needs no special case, since a `.d64`
+is already just a file to the file system.
+
+Differences are found by **content**, not by name and date. Every file is
+hashed, so a file that was renamed reads as a rename rather than as one file
+added and another deleted, and a file touched but not changed reads as no
+difference at all.
+
+### Why there is a record
+
+Two folders that both change cannot be compared honestly by looking only at the
+two of them. A file present on the left and absent on the right is two stories
+at once — it was added on the left, or it was deleted on the right — and the two
+call for opposite actions. Nothing in either folder can tell them apart.
+
+So a successful sync writes down what the two sides then agreed on: every
+relative path and the hash of what was there. The next run compares three ways,
+and the question is answered rather than guessed at — whichever side no longer
+matches what was agreed is the side that moved.
+
+| the record | left | right | |
+|---|---|---|---|
+| `abc` | `abc` | `abc` | nothing to do |
+| `abc` | `f10` | `abc` | changed on the left; send it right |
+| `abc` | `abc` | `77c` | changed on the right; send it left |
+| `abc` | `f10` | `f10` | the same edit on both sides; nothing to do |
+| `abc` | `f10` | `77c` | **a conflict**, left alone for you to settle |
+| `abc` | — | `abc` | deleted on the left; carry it over |
+| `abc` | `f10` | — | changed here, deleted there — **a conflict** |
+| — | `abc` | — | new on the left; send it right |
+
+The record lives in `~/Library/Application Support/…/Sync/`, one small JSON file
+per pair of folders, named after both of them. Nothing is ever written beside
+your own files. Because it is keyed by the two paths, renaming a synced folder
+loses it — and losing it costs one careful run, not a file, because:
+
+**A first run never proposes a deletion.** With no record of an earlier state
+there is no evidence for "deleted there" over "added here", so the only
+non-destructive reading is the one it takes. The same is true of a record that
+is missing, damaged, or written by an older version — every doubt reads as no
+record at all.
+
+### What it will not guess
+
+* **A folder that will not open** makes no claim about what is inside it.
+  Everything under it is marked unreadable and given no verdict at all — without
+  that rule, one folder with its permissions off reads as nine hundred files
+  deleted on the other side.
+* **A file that cannot be read** is reported, and is kept out of the record.
+  A hash that was never taken must never become the thing a later deletion is
+  justified by.
+* **Two files with the same content** carry no evidence about which of them was
+  renamed, so neither is called a rename. Empty files never pair at all — every
+  one of them has the same hash.
+* **A folder on one side and a file on the other** is always a conflict, since
+  resolving it means deleting a tree.
+* **A file that changed while the report was open** is left alone and said so.
+  Every copy and every delete re-checks its target first.
+
+### Deletions
+
+Off unless you ask for them. With **Carry deletions across** unticked a sync only
+ever adds and replaces, so it cannot lose anything; the deletions are still
+reported, just not acted on. With it ticked, a file deleted on one side since
+the last sync is deleted on the other — and **always to the Trash**, whatever
+the preference for `F8` says. That one governs files you picked out one at a
+time; these are files the sync decided about.
+
+Conflicts are never resolved on their own. They sort to the top of the report
+in the alarm colour, and their suggested action is to do nothing.
+
+### The report
+
+Rows are grouped — conflicts, renames, changes, new files, deletions — and each
+carries a menu of the actions that are legal for it, seeded with a suggestion
+you can override. *All…* sets every row at once. The footer says the shape of
+what will happen before it happens: `4 → · 1 ← · 2 renamed · 1 to the Trash`.
+
+Symbolic links are skipped rather than followed, and counted at the bottom.
+A `.app` and its kind are compared and copied whole rather than entered, so a
+change anywhere inside one re-copies all of it — which is what the Finder does
+too, and it means a half-written bundle is not a thing that can happen here.
+Hidden files follow the same `⇧⌘.` preference as the panels.
+
+Files are hashed once and then remembered by size and date, so the run after a
+sync reads no file bytes at all. *Compare again* re-reads every file, for the
+case that trick cannot see: an edit made within the same second that left the
+file exactly as long as it was.
 
 ## Editing an image is a transaction
 
@@ -945,9 +1042,9 @@ Three targets share one folder tree:
 
 | | |
 |---|---|
-| `Shared/Picture` | the IFF container and the ILBM reader — the app, the previews and the thumbnails |
+| `Shared/Picture` | the IFF container, the ILBM reader and the C64 picture formats — the app, the previews and the thumbnails |
 | `Shared/Sound` | SID, module and 8SVX readers, the three players, and the vendored C engines — the app and the previews |
-| `CommodoreFileBrowser` | the browser: panels, dialogs, disk formats, themes, video export |
+| `CommodoreFileBrowser` | the browser: panels, dialogs, disk formats, themes, video export, folder sync |
 | `QuickLookPreview`, `QuickLookThumbnail` | one file each, near enough |
 
 Xcode compiles a folder into a target, so the tree is what says which target
@@ -978,6 +1075,17 @@ places imply, which drops are refused before the mouse is let go, and that a
 drop between two folders, into an image, back out of one, or in from another
 application puts the files where they were dropped. The pointer itself is not
 driven — everything behind it is.
+
+Folder sync gets a section of its own, most of it hammering the classification
+table with hand-built dictionaries, so the part of the feature that could lose
+a file is the cheapest part to test. Then the rest against real folders under
+the temp directory: that the walk stops at a disk image and a bundle, that a
+3 MB file streamed in chunks hashes the same as one read whole, that a folder
+with its permissions off gives no verdict about what is inside it, that a first
+run proposes no deletion, that a rename is applied as a move, that a file
+changed after the report was made is not written over, and that the whole thing
+works through the app object — guards, a scan on another thread, and a second
+run finding the record the first one wrote.
 
 The music side is checked against real collections rather than fixtures. SID:
 the naming convention against every shape on the disks, PSID parsing, and the

@@ -1007,6 +1007,7 @@ struct HelpSheet: View {
             ("Return", "Enter a folder or an image, or play a tune or a module"),
             ("F5", "Copy to the other panel"),
             ("F6", "Move to the other panel"),
+            ("⇧⌘S", "Compare and sync the two panels' folders"),
             ("F7", "New folder"),
             ("F8", "Delete"),
             ("F9 / ⇧F6 / ⌘R", "Rename"),

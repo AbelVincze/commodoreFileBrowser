@@ -236,6 +236,25 @@ struct ContentView: View {
                         onClose: { model.sheet = nil })
         case .help:
             HelpSheet(palette: palette, onClose: { model.sheet = nil })
+        case .syncFolders:
+            // The one sheet that stays up while it works: the scan lands in it
+            // long after it opened, and a comparison of two large trees needs
+            // somewhere to put a progress bar and a Cancel.
+            SyncSheet(plan: model.syncPlan,
+                      progress: model.syncProgress,
+                      scanning: model.isSyncing,
+                      leftName: model.left.location.url?.path ?? "",
+                      rightName: model.right.location.url?.path ?? "",
+                      palette: palette,
+                      propagateDeletions: Binding(
+                          get: { settings.syncPropagatesDeletes },
+                          set: { settings.syncPropagatesDeletes = $0
+                                 model.startSyncScan(hashEverything: false) }),
+                      onRescan: { model.startSyncScan(hashEverything: true) },
+                      onCancel: { model.cancelSync(); model.sheet = nil; model.syncPlan = nil },
+                      onApply: { model.performSync($0,
+                                                   propagateDeletions: settings.syncPropagatesDeletes)
+                                 model.sheet = nil })
         }
     }
 }

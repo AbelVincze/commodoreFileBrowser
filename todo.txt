@@ -13,6 +13,7 @@ TODO:
 
 - quick look disk image (dir vith c64 font)
 +- print dir
++- sync folders
 
 fix
 +- sid player if no more file and the last one is not recognized, after close, error message appears.

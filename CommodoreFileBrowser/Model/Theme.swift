@@ -202,6 +202,13 @@ final class SettingsStore: ObservableObject {
     @Published var showHiddenFiles: Bool { didSet { save() } }
     /// Deleting host files puts them in the Trash rather than erasing them.
     @Published var deleteToTrash: Bool { didSet { save() } }
+    /// Whether a sync carries a deletion from one side to the other.
+    ///
+    /// Off to begin with, and a habit rather than a per-run decision, so the
+    /// sheet writes it back the way the transfer sheet writes back its
+    /// extension checkbox. A sync that only ever adds is one that cannot lose
+    /// anything, and that is the right thing to have to ask for.
+    @Published var syncPropagatesDeletes: Bool { didSet { save() } }
     /// Copying out of a Commodore image adds the file type as an extension.
     /// Remembered from the copy sheet, since it is a habit rather than a
     /// per-file decision.
@@ -246,6 +253,7 @@ final class SettingsStore: ObservableObject {
         var font: PETSCIIFont?
         var showHiddenFiles: Bool
         var deleteToTrash: Bool?
+        var syncPropagatesDeletes: Bool?
         var addHostExtension: Bool?
         var splitFraction: Double?
         var bitmapMagnification: Int?
@@ -278,6 +286,7 @@ final class SettingsStore: ObservableObject {
         font = stored?.font ?? PETSCIIFont(rom: .c64, set: stored?.charSet ?? .uppercase)
         showHiddenFiles = stored?.showHiddenFiles ?? false
         deleteToTrash = stored?.deleteToTrash ?? true
+        syncPropagatesDeletes = stored?.syncPropagatesDeletes ?? false
         addHostExtension = stored?.addHostExtension ?? true
         splitFraction = stored?.splitFraction ?? 0.5
         bitmapMagnification = stored?.bitmapMagnification ?? 2
@@ -302,7 +311,9 @@ final class SettingsStore: ObservableObject {
         guard !loading else { return }
         let stored = Stored(appearance: appearance, light: light, dark: dark,
                             charSet: nil, font: font, showHiddenFiles: showHiddenFiles,
-                            deleteToTrash: deleteToTrash, addHostExtension: addHostExtension,
+                            deleteToTrash: deleteToTrash,
+                            syncPropagatesDeletes: syncPropagatesDeletes,
+                            addHostExtension: addHostExtension,
                             splitFraction: splitFraction,
                             bitmapMagnification: bitmapMagnification, bitmapInvert: bitmapInvert,
                             viewerUsesC64Offsets: viewerUsesC64Offsets,

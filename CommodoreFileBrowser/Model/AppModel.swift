@@ -63,6 +63,7 @@ enum AppSheet: Identifiable {
     case sample
     case discardChanges
     case help
+    case syncFolders
 
     var id: String {
         switch self {
@@ -80,6 +81,9 @@ enum AppSheet: Identifiable {
         case .sample: return "sample"
         case .discardChanges: return "discard"
         case .help: return "help"
+        // Constant, so the sheet's own editing state survives a fresh scan
+        // landing in it. `SyncPlan.id` is what says the rows have changed.
+        case .syncFolders: return "sync"
         }
     }
 }
@@ -123,6 +127,19 @@ final class AppModel: ObservableObject {
     /// menu is rebuilt from what it observes on this object, and the panels
     /// are objects of their own.
     @Published private(set) var canReorderEntries = false
+
+    /// What the sync sheet is reporting, held apart from `sheet` like the
+    /// repair plan — except that this one arrives from a background scan long
+    /// after the sheet went up, so the sheet has to be able to sit there with
+    /// nothing in it.
+    @Published var syncPlan: SyncPlan?
+    @Published var syncProgress: SyncProgress?
+    @Published private(set) var isSyncing = false
+    /// Set from the main thread, read by the worker.
+    private var syncCancel: SyncCancel?
+    /// A scan that has been superseded must not publish its answer. Bumped
+    /// whenever one starts, and checked before anything is handed back.
+    private var syncRun = 0
 
     /// True while the system print dialog is up. It is an AppKit sheet rather
     /// than an `AppSheet`, so it has to say so for itself.
@@ -853,6 +870,137 @@ final class AppModel: ObservableObject {
             case .folderIntoImage: return "Folders cannot be copied into a disk image."
             case .noDestination: return "The other panel is not a folder or an image."
             }
+        }
+    }
+
+    // MARK: - Sync
+
+    /// Compares the two panels' folders and opens the report.
+    ///
+    /// The sheet goes up empty and fills itself: walking and hashing two trees
+    /// takes seconds, and everything else in this object is synchronous, so
+    /// the waiting is the sheet's business rather than this one's.
+    func beginSyncFolders() {
+        guard !isSyncing else { return }
+        guard case .directory(let leftURL) = left.location,
+              case .directory(let rightURL) = right.location else {
+            if left.location.isImage || right.location.isImage {
+                report("A disk image is synced as a file, not as a folder — "
+                       + "open the folder it sits in on both sides.")
+            } else {
+                report("Sync compares two folders on the Mac. Open a folder on "
+                       + "both sides — the volume list is not one.")
+            }
+            return
+        }
+        let a = leftURL.standardizedFileURL, b = rightURL.standardizedFileURL
+        guard a != b else { report(SyncError.sameFolder.localizedDescription); return }
+        guard !SyncEngine.isAncestor(a, of: b), !SyncEngine.isAncestor(b, of: a) else {
+            report("One of these folders is inside the other, so syncing them "
+                   + "would copy a folder into itself.")
+            return
+        }
+        syncPlan = nil
+        sheet = .syncFolders
+        startSyncScan(hashEverything: false)
+    }
+
+    /// Walks and hashes both sides, off the main thread.
+    ///
+    /// Everything the worker needs is copied out first: nothing on it touches
+    /// this object, a panel or the settings store, all of which belong to the
+    /// main thread.
+    func startSyncScan(hashEverything: Bool) {
+        guard case .directory(let leftURL) = left.location,
+              case .directory(let rightURL) = right.location else { return }
+        syncRun += 1
+        let run = syncRun
+        let cancel = SyncCancel()
+        syncCancel = cancel
+        isSyncing = true
+        syncPlan = nil
+        syncProgress = SyncProgress(phase: .walking)
+
+        let hidden = settings.showHiddenFiles
+        let deletions = settings.syncPropagatesDeletes
+        let store = SyncBaselineStore.applicationSupport()
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let baseline = store.load(left: leftURL, right: rightURL)
+            let known = baseline?.byPath ?? [:]
+            func report(_ progress: SyncProgress) {
+                DispatchQueue.main.async {
+                    guard let self, self.syncRun == run else { return }
+                    self.syncProgress = progress
+                }
+            }
+            do {
+                let l = try SyncScanner.scan(root: leftURL, includeHidden: hidden,
+                                             baseline: known, hashEverything: hashEverything,
+                                             cancel: cancel, progress: report)
+                let r = try SyncScanner.scan(root: rightURL, includeHidden: hidden,
+                                             baseline: known, hashEverything: hashEverything,
+                                             cancel: cancel, progress: report)
+                let plan = SyncEngine.plan(left: l, right: r, baseline: baseline.map { _ in known },
+                                           propagateDeletions: deletions)
+                DispatchQueue.main.async {
+                    guard let self, self.syncRun == run else { return }
+                    self.isSyncing = false
+                    self.syncProgress = nil
+                    self.syncPlan = plan
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.syncRun == run else { return }
+                    self.isSyncing = false
+                    self.syncProgress = nil
+                    // A cancelled or failed scan produces no report at all.
+                    // Half a comparison is not a smaller comparison, it is a
+                    // wrong one.
+                    self.syncPlan = nil
+                    if !(error is SyncError) { self.fail(error) }
+                }
+            }
+        }
+    }
+
+    func cancelSync() {
+        syncCancel?.cancel()
+        syncRun += 1
+        isSyncing = false
+        syncProgress = nil
+    }
+
+    /// Carries out the rows the user settled on, and writes down what actually
+    /// happened.
+    func performSync(_ rows: [SyncDifference], propagateDeletions: Bool) {
+        guard let plan = syncPlan else { return }
+        settings.syncPropagatesDeletes = propagateDeletions
+        let store = SyncBaselineStore.applicationSupport()
+        let baseline = store.load(left: plan.leftRoot, right: plan.rightRoot)?.byPath ?? [:]
+        // Always the Trash, whatever the preference for F8 says. That one
+        // governs files the user picked out one at a time; these are files the
+        // sync decided about, and a decision made from a stale record is
+        // exactly the one worth being able to take back.
+        let result = SyncRunner.apply(rows, leftRoot: plan.leftRoot, rightRoot: plan.rightRoot,
+                                      settled: plan.settled, carried: plan.carried,
+                                      baseline: baseline, toTrash: true,
+                                      cancel: SyncCancel())
+        var writeError: Error?
+        do {
+            try store.save(result.baseline, left: plan.leftRoot, right: plan.rightRoot,
+                           includesHidden: settings.showHiddenFiles)
+        } catch {
+            // The files are already where they belong; the only cost is that
+            // the next run has no record to work from, and a run with no record
+            // deletes nothing.
+            writeError = error
+        }
+        syncPlan = nil
+        finishOperation(verb: "Synced", count: result.applied, skipped: result.skipped,
+                        error: result.failures.first?.error ?? writeError)
+        if result.failures.count > 1 {
+            statusMessage = "Synced \(result.applied) · \(result.failures.count) could not be done"
         }
     }
 

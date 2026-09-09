@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CryptoKit
 setbuf(stdout, nil)
 
 let scratch = NSTemporaryDirectory()
@@ -2432,6 +2433,373 @@ do {
     }
 } catch {
     print("  FAIL 8SVX: \(error)"); failures += 1
+}
+
+
+// --- Folder sync -------------------------------------------------------------
+print("\n=== folder sync")
+do {
+    let fm = FileManager.default
+    let root = URL(fileURLWithPath: scratch).appendingPathComponent("sync-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: root) }
+    let cancel = SyncCancel()
+
+    /// A file, made where it is asked for, with the folders it needs.
+    @discardableResult
+    func put(_ text: String, _ path: String, in side: URL) throws -> URL {
+        let url = path.split(separator: "/").reduce(side) { $0.appendingPathComponent(String($1)) }
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url)
+        return url
+    }
+    func scan(_ side: URL, baseline: [String: SyncEntry] = [:],
+              hidden: Bool = false) throws -> SyncScan {
+        try SyncScanner.scan(root: side, includeHidden: hidden, baseline: baseline, cancel: cancel)
+    }
+    func entry(_ path: String, _ hash: String, size: Int64 = 10,
+               dir: Bool = false) -> SyncEntry {
+        SyncEntry(path: path, isDirectory: dir, isPackage: false, size: size,
+                  modified: 1_000_000, hash: hash)
+    }
+
+    // --- the walk
+    let left = root.appendingPathComponent("left")
+    let right = root.appendingPathComponent("right")
+    try put("alpha", "a.txt", in: left)
+    try put("deep", "sub/deep.txt", in: left)
+    try put("image", "disk.d64", in: left)
+    try put("secret", ".hidden", in: left)
+    try fm.createDirectory(at: left.appendingPathComponent("empty"), withIntermediateDirectories: true)
+    try fm.createSymbolicLink(at: left.appendingPathComponent("link"),
+                              withDestinationURL: left.appendingPathComponent("a.txt"))
+
+    var walked = try scan(left)
+    check(walked.entries["sub/deep.txt"] != nil, "the walk reaches into subfolders and keys by relative path")
+    check(walked.entries["disk.d64"]?.isDirectory == false, "a disk image is one leaf, not a folder to walk into")
+    check(walked.entries["empty"]?.isDirectory == true, "an empty folder is an entry of its own")
+    check(walked.entries[".hidden"] == nil, "hidden files stay out when the panels are hiding them")
+    check(walked.problems.contains { $0.path == "link" }, "a symbolic link is skipped and said so")
+    check(walked.entries["link"] == nil, "and never followed")
+    walked = try scan(left, hidden: true)
+    check(walked.entries[".hidden"] != nil, "and come back in when the panels show them")
+
+    // --- the hash
+    try put("same", "x.txt", in: right)
+    try put("same", "y.txt", in: right)
+    try put("other", "z.txt", in: right)
+    let rightScan = try scan(right)
+    check(rightScan.entries["x.txt"]?.hash == rightScan.entries["y.txt"]?.hash,
+          "two files with the same bytes hash the same")
+    check(rightScan.entries["x.txt"]?.hash != rightScan.entries["z.txt"]?.hash,
+          "and one byte different hashes differently")
+
+    // A file past the chunk size, which is what catches a streaming bug.
+    let big = root.appendingPathComponent("big.bin")
+    var bytes = [UInt8](repeating: 0, count: 3 * 1024 * 1024)
+    for i in 0..<bytes.count { bytes[i] = UInt8(truncatingIfNeeded: i &* 7 &+ 13) }
+    let blob = Data(bytes)
+    try blob.write(to: big)
+    let whole: String = SHA256.hash(data: blob).map { String(format: "%02x", $0) }.joined()
+    let streamed: String = try SyncScanner.fileHash(big, cancel: cancel)
+    check(streamed == whole,
+          "a 3 MB file streamed in chunks hashes the same as hashing it whole")
+
+    // --- the fast path
+    let seeded = try scan(left).entries
+    let again = try SyncScanner.scan(root: left, includeHidden: false,
+                                     baseline: seeded, cancel: cancel)
+    check(again.bytesHashed == 0, "size and date matching the record means no file is read again")
+    check(again.entries["a.txt"]?.hash == seeded["a.txt"]?.hash, "and the recorded hash is carried over")
+    try put("alpha changed", "a.txt", in: left)
+    let touched = try SyncScanner.scan(root: left, includeHidden: false,
+                                       baseline: seeded, cancel: cancel)
+    check(touched.bytesHashed > 0, "a file that has moved on is read again")
+    check(touched.entries["a.txt"]?.hash != seeded["a.txt"]?.hash, "and hashes differently")
+    let forced = try SyncScanner.scan(root: left, includeHidden: false,
+                                      baseline: seeded, hashEverything: true, cancel: cancel)
+    check(forced.bytesHashed > 0, "and asking for every file to be hashed ignores the record")
+
+    // --- the table, on hand-built dictionaries: no file system, no waiting
+    func verdict(_ b: SyncEntry?, _ l: SyncEntry?, _ r: SyncEntry?,
+                 deletions: Bool = true, hasBaseline: Bool = true) -> SyncEngine.Verdict? {
+        SyncEngine.classify(baseline: b, left: l, right: r,
+                            propagateDeletions: deletions, hasBaseline: hasBaseline)
+    }
+    let A = entry("f", "aaa"), B = entry("f", "bbb"), C = entry("f", "ccc")
+
+    check(verdict(A, A, A) == nil, "a file none of the three disagree about has nothing to report")
+    check(verdict(nil, A, nil)?.kind == .newOnLeft, "present on the left alone is new there")
+    check(verdict(nil, A, nil)?.action == .copyToRight, "and the suggestion is to send it across")
+    check(verdict(nil, nil, A)?.kind == .newOnRight, "and the mirror holds")
+    check(verdict(nil, A, A) == nil, "the same file appearing on both sides needs nothing")
+    check(verdict(nil, A, B)?.kind == .conflictBothAdded, "two different files at one new path is a conflict")
+    check(verdict(A, B, A)?.kind == .changedOnLeft, "the side that moved away from the record is the one that changed")
+    check(verdict(A, B, A)?.action == .copyToRight, "and its version is the one to send")
+    check(verdict(A, A, B)?.kind == .changedOnRight, "and the mirror holds")
+    check(verdict(A, B, B) == nil, "the same edit made on both sides is nothing to do")
+    check(verdict(A, B, C)?.kind == .conflictBothChanged, "different edits on both sides is a conflict")
+    check(verdict(A, B, C)?.action == .skip, "and a conflict suggests doing nothing")
+    check(verdict(A, A, nil)?.kind == .deletedOnRight, "gone from one side, unchanged on the other, is a deletion")
+    check(verdict(A, A, nil)?.action == .deleteLeft, "which is carried over")
+    check(verdict(A, nil, A)?.action == .deleteRight, "and the mirror holds")
+    check(verdict(A, B, nil)?.kind == .conflictChangedAndDeleted(changed: .left),
+          "changed here and deleted there is a conflict, not a deletion")
+    check(verdict(A, nil, nil) == nil, "gone from both sides is simply gone")
+    check(verdict(nil, A, entry("f", "", dir: true))?.kind == .conflictTypeMismatch,
+          "a folder on one side and a file on the other is never resolved on its own")
+
+    // Deletions switched off change the suggestion and nothing else.
+    check(verdict(A, A, nil, deletions: false)?.kind == .deletedOnRight,
+          "with deletions off the verdict is unchanged")
+    check(verdict(A, A, nil, deletions: false)?.action == .skip, "but nothing is suggested")
+    check(verdict(A, A, nil, deletions: false)?.allowed.allMatch { !$0.isDestructive } == true,
+          "and the row will not even offer one")
+
+    // --- a first run proposes no deletion anywhere
+    let freshLeft = root.appendingPathComponent("fresh-left")
+    let freshRight = root.appendingPathComponent("fresh-right")
+    try put("only here", "mine.txt", in: freshLeft)
+    try put("only there", "theirs.txt", in: freshRight)
+    try put("shared", "both.txt", in: freshLeft)
+    try put("shared", "both.txt", in: freshRight)
+    let first = SyncEngine.plan(left: try scan(freshLeft), right: try scan(freshRight),
+                                baseline: nil, propagateDeletions: true)
+    check(!first.hasBaseline, "with no record of an earlier sync the plan says so")
+    check(first.rows.allMatch { !$0.action.isDestructive },
+          "and a first run proposes no deletion at all, whatever the setting says")
+    check(first.settled["both.txt"] != nil, "a file already matching seeds the record")
+    check(!first.rows.contains { $0.path == "both.txt" }, "and is not reported as a difference")
+
+    // --- renames
+    var base: [String: SyncEntry] = ["old.txt": entry("old.txt", "aaa")]
+    var l = SyncScan(root: left), r = SyncScan(root: right)
+    l.entries = ["new.txt": entry("new.txt", "aaa")]
+    r.entries = ["old.txt": entry("old.txt", "aaa")]
+    var renamed = SyncEngine.plan(left: l, right: r, baseline: base, propagateDeletions: true)
+    check(renamed.rows.count == 1, "a rename is one row, not an add and a delete")
+    check(renamed.rows.first?.kind == .renamedOnLeft, "and reads as a rename")
+    check(renamed.rows.first?.renamedFrom == "old.txt" && renamed.rows.first?.path == "new.txt",
+          "naming both ends of it")
+    check(renamed.rows.first?.action == .renameOnRight, "to be applied as a move on the other side")
+
+    // One file gone and one arrived is still unambiguous even when a third
+    // file shares their content, because the third one never moved.
+    base = ["one.txt": entry("one.txt", "aaa"), "still.txt": entry("still.txt", "aaa")]
+    l.entries = ["new.txt": entry("new.txt", "aaa"), "still.txt": entry("still.txt", "aaa")]
+    r.entries = base
+    let oneMoved = SyncEngine.plan(left: l, right: r, baseline: base, propagateDeletions: true)
+    check(oneMoved.rows.first(where: { $0.kind == .renamedOnLeft })?.renamedFrom == "one.txt",
+          "a file that shares its content with one that never moved still pairs")
+
+    // Two gone and two arrived is the real ambiguity: nothing anywhere says
+    // which of them became which.
+    base = ["one.txt": entry("one.txt", "aaa"), "two.txt": entry("two.txt", "aaa")]
+    l.entries = ["newA.txt": entry("newA.txt", "aaa"), "newB.txt": entry("newB.txt", "aaa")]
+    r.entries = base
+    let ambiguous = SyncEngine.plan(left: l, right: r, baseline: base, propagateDeletions: true)
+    check(ambiguous.rows.allMatch { $0.renamedFrom == nil },
+          "two files with the same content give no evidence of which was renamed, so neither is")
+    check(ambiguous.rows.contains { $0.kind == .newOnLeft } &&
+          ambiguous.rows.contains { $0.kind == .deletedOnLeft },
+          "and they stay reported as plain arrivals and departures")
+
+    // Every empty file shares one hash, so none of them may ever pair.
+    let emptyHash = try SyncScanner.fileHash({ let u = root.appendingPathComponent("e");
+                                               try! Data().write(to: u); return u }(), cancel: cancel)
+    base = ["gone.txt": entry("gone.txt", emptyHash, size: 0)]
+    l.entries = ["added.txt": entry("added.txt", emptyHash, size: 0)]
+    r.entries = ["gone.txt": entry("gone.txt", emptyHash, size: 0)]
+    let empties = SyncEngine.plan(left: l, right: r, baseline: base, propagateDeletions: true)
+    check(empties.rows.allMatch { $0.renamedFrom == nil },
+          "empty files never pair as renames: they all hash alike")
+
+    // --- a folder that will not open makes no claim about what is inside it
+    let blindLeft = root.appendingPathComponent("blind-left")
+    let blindRight = root.appendingPathComponent("blind-right")
+    try put("one", "locked/a.txt", in: blindLeft)
+    try put("two", "locked/b.txt", in: blindLeft)
+    try put("keep", "open.txt", in: blindLeft)
+    try put("keep", "open.txt", in: blindRight)
+    let lockedDir = blindRight.appendingPathComponent("locked")
+    try fm.createDirectory(at: lockedDir, withIntermediateDirectories: true)
+    try put("two", "locked/b.txt", in: blindRight)
+    try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: lockedDir.path)
+    defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lockedDir.path) }
+
+    let blindScan = try scan(blindRight)
+    check(!blindScan.blindDirectories.isEmpty, "a folder that will not open is recorded as such")
+    let blindPlan = SyncEngine.plan(left: try scan(blindLeft), right: blindScan,
+                                    baseline: ["locked/a.txt": entry("locked/a.txt", "aaa")],
+                                    propagateDeletions: true)
+    check(blindPlan.blind, "and the report says it is incomplete")
+    check(blindPlan.rows.filter { $0.path.hasPrefix("locked/") }.allMatch { $0.kind == .unreadable },
+          "nothing under it is given a verdict")
+    check(blindPlan.rows.allMatch { !$0.action.isDestructive },
+          "and nothing under it is proposed for deletion")
+    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lockedDir.path)
+
+    // --- applying, for real
+    let doLeft = root.appendingPathComponent("do-left")
+    let doRight = root.appendingPathComponent("do-right")
+    try put("new file", "fresh.txt", in: doLeft)
+    try put("deep new", "a/b/c/deep.txt", in: doLeft)
+    try put("agreed", "same.txt", in: doLeft)
+    try put("agreed", "same.txt", in: doRight)
+    try put("doomed", "old-name.txt", in: doRight)
+    let renameSource = try put("doomed", "new-name.txt", in: doLeft)
+    let inode = try fm.attributesOfItem(atPath: renameSource.path)[.systemFileNumber] as? Int
+
+    var doBase = try scan(doLeft).entries.filter { $0.key == "same.txt" }
+    doBase["old-name.txt"] = try scan(doRight).entries["old-name.txt"]
+    let doPlan = SyncEngine.plan(left: try scan(doLeft, baseline: doBase),
+                                 right: try scan(doRight, baseline: doBase),
+                                 baseline: doBase, propagateDeletions: true)
+    let outcome = SyncRunner.apply(doPlan.rows, leftRoot: doLeft, rightRoot: doRight,
+                                   settled: doPlan.settled, carried: doPlan.carried,
+                                   baseline: doBase, toTrash: false, cancel: cancel)
+    check(outcome.failures.isEmpty, "applying a plan reports no failures\(outcome.failures.map { " — \($0.error)" }.joined())")
+    check(fm.fileExists(atPath: doRight.appendingPathComponent("fresh.txt").path),
+          "a new file lands on the other side")
+    check(fm.fileExists(atPath: doRight.appendingPathComponent("a/b/c/deep.txt").path),
+          "and a copy makes the folders it needs on the way")
+    let movedTo = doRight.appendingPathComponent("new-name.txt")
+    check(fm.fileExists(atPath: movedTo.path)
+          && !fm.fileExists(atPath: doRight.appendingPathComponent("old-name.txt").path),
+          "a rename is carried over as a rename")
+    let afterLeft = try scan(doLeft), afterRight = try scan(doRight)
+    check(Set(afterLeft.entries.keys) == Set(afterRight.entries.keys),
+          "and afterwards the two sides hold the same paths")
+    check(outcome.baseline["fresh.txt"] != nil, "what was applied is written down as agreed")
+    check(inode != nil, "the rename source had an inode to compare")
+
+    // --- deletions, and the checkbox that governs them
+    let delLeft = root.appendingPathComponent("del-left")
+    let delRight = root.appendingPathComponent("del-right")
+    try put("doomed", "bye.txt", in: delLeft)
+    let delBase = try scan(delLeft).entries
+    let offPlan = SyncEngine.plan(left: try scan(delLeft), right: try scan(delRight),
+                                  baseline: delBase, propagateDeletions: false)
+    check(offPlan.rows.first?.kind == .deletedOnRight, "a file gone from one side is still reported")
+    check(offPlan.rows.allMatch { $0.action == .skip }, "but with deletions off nothing is proposed")
+    _ = SyncRunner.apply(offPlan.rows, leftRoot: delLeft, rightRoot: delRight,
+                         settled: offPlan.settled, carried: offPlan.carried,
+                         baseline: delBase, toTrash: false, cancel: cancel)
+    check(fm.fileExists(atPath: delLeft.appendingPathComponent("bye.txt").path),
+          "and applying it leaves the file alone")
+
+    let onPlan = SyncEngine.plan(left: try scan(delLeft), right: try scan(delRight),
+                                 baseline: delBase, propagateDeletions: true)
+    check(onPlan.rows.first?.action == .deleteLeft, "with deletions on the removal is proposed")
+    _ = SyncRunner.apply(onPlan.rows, leftRoot: delLeft, rightRoot: delRight,
+                         settled: onPlan.settled, carried: onPlan.carried,
+                         baseline: delBase, toTrash: false, cancel: cancel)
+    check(!fm.fileExists(atPath: delLeft.appendingPathComponent("bye.txt").path),
+          "and applying it carries the deletion over")
+
+    // --- a file that moved on while the report was open is left alone
+    let raceLeft = root.appendingPathComponent("race-left")
+    let raceRight = root.appendingPathComponent("race-right")
+    try put("first", "moving.txt", in: raceLeft)
+    let racePlan = SyncEngine.plan(left: try scan(raceLeft), right: try scan(raceRight),
+                                   baseline: nil, propagateDeletions: true)
+    try put("edited since the report was made, and longer", "moving.txt", in: raceLeft)
+    let raced = SyncRunner.apply(racePlan.rows, leftRoot: raceLeft, rightRoot: raceRight,
+                                 settled: [:], carried: [:], baseline: [:],
+                                 toTrash: false, cancel: cancel)
+    check(raced.failures.count == 1, "a file changed after the report was made is not copied blind")
+    check(raced.baseline["moving.txt"] == nil, "and is dropped from the record so it is looked at again")
+
+    // --- a skipped row is never recorded as agreed
+    var skipping = racePlan
+    skipping.rows[0].action = .skip
+    let skipped = SyncRunner.apply(skipping.rows, leftRoot: raceLeft, rightRoot: raceRight,
+                                   settled: [:], carried: [:],
+                                   baseline: ["moving.txt": entry("moving.txt", "aaa")],
+                                   toTrash: false, cancel: cancel)
+    check(skipped.baseline["moving.txt"] == nil,
+          "a row the user skipped is dropped from the record rather than called agreed")
+
+    // --- the baseline on disk
+    let store = SyncBaselineStore(root: root.appendingPathComponent("baselines"))
+    try store.save(["a.txt": entry("a.txt", "aaa")], left: left, right: right, includesHidden: false)
+    check(store.load(left: left, right: right)?.entries.count == 1, "the record round trips")
+    check(store.load(left: left, right: right)?.byPath["a.txt"]?.hash == "aaa", "with its hashes intact")
+    check(store.url(forLeft: left, right: right) == store.url(forLeft: right, right: left),
+          "and is found whichever way round the panels are")
+    try Data("{ not json".utf8).write(to: store.url(forLeft: left, right: right))
+    check(store.load(left: left, right: right) == nil, "a damaged record reads as no record")
+    check(store.load(left: left, right: root.appendingPathComponent("elsewhere")) == nil,
+          "and a record for other folders is not borrowed")
+
+    // --- the guards
+    check(SyncEngine.isAncestor(left, of: left.appendingPathComponent("sub")),
+          "a folder inside another is recognised")
+    check(!SyncEngine.isAncestor(URL(fileURLWithPath: "/a/b"), of: URL(fileURLWithPath: "/a/bc")),
+          "and a name that merely starts the same is not")
+
+    // --- the whole thing, through the app object
+    let settings = SettingsStore()
+    settings.syncPropagatesDeletes = false
+    let model = AppModel(settings: settings)
+
+    /// The scan runs on another queue and answers on the main one, so the
+    /// tool has to let the main queue run for the answer to arrive.
+    func settle(_ seconds: TimeInterval = 10, until done: () -> Bool) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !done(), Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+    }
+
+    model.left.navigate(to: .volumes)
+    model.right.navigate(to: .directory(right))
+    model.alertMessage = nil
+    model.beginSyncFolders()
+    check(model.sheet == nil, "the volume list is not a folder, so it cannot be synced")
+    check(model.alertMessage?.contains("folder") == true, "and it says so")
+
+    let liveLeft = root.appendingPathComponent("live-left")
+    let liveRight = root.appendingPathComponent("live-right")
+    try put("shared", "keep.txt", in: liveLeft)
+    try put("shared", "keep.txt", in: liveRight)
+    try put("only mine", "mine.txt", in: liveLeft)
+
+    model.alertMessage = nil
+    model.left.navigate(to: .directory(liveLeft))
+    model.right.navigate(to: .directory(liveLeft))
+    model.beginSyncFolders()
+    check(model.sheet == nil && model.alertMessage?.contains("same folder") == true,
+          "and neither can one folder against itself")
+
+    model.alertMessage = nil
+    model.left.navigate(to: .directory(liveLeft))
+    model.right.navigate(to: .directory(liveLeft.appendingPathComponent("nested")))
+    try fm.createDirectory(at: liveLeft.appendingPathComponent("nested"),
+                           withIntermediateDirectories: true)
+    model.beginSyncFolders()
+    check(model.alertMessage?.contains("inside the other") == true,
+          "nor a folder against something inside itself")
+    try? fm.removeItem(at: liveLeft.appendingPathComponent("nested"))
+
+    model.alertMessage = nil
+    model.right.navigate(to: .directory(liveRight))
+    model.beginSyncFolders()
+    check(model.sheet != nil, "two ordinary folders open the report")
+    settle { !model.isSyncing && model.syncPlan != nil }
+    check(model.syncPlan != nil, "which fills itself in from a scan on another thread")
+    check(model.syncPlan?.rows.count == 1, "finding the one file that differs")
+    check(model.syncPlan?.rows.first?.path == "mine.txt", "and naming it")
+    model.performSync(model.syncPlan?.rows ?? [], propagateDeletions: false)
+    check(fm.fileExists(atPath: liveRight.appendingPathComponent("mine.txt").path),
+          "and applying it copies the file across")
+
+    // Second time round there is a record, so nothing is left to do.
+    model.beginSyncFolders()
+    settle { !model.isSyncing && model.syncPlan != nil }
+    check(model.syncPlan?.rows.isEmpty == true, "run again, the two sides agree and nothing is proposed")
+    check(model.syncPlan?.hasBaseline == true, "and the record written last time is found")
+    model.sheet = nil
+    SyncBaselineStore.applicationSupport().deleteRecord(left: liveLeft, right: liveRight)
 }
 
 // --- BAM repair -------------------------------------------------------------

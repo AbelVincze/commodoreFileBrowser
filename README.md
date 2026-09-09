@@ -104,7 +104,7 @@ because the names are never converted to ASCII for display.
 | `Tab` | switch panels |
 | `Space` | mark the file under the cursor |
 | `+` `-` `*` | mark all, unmark all, invert |
-| `Return` | enter a folder or an image, play a SID tune, a tracker module or an IFF sample, or show an Amiga or C64 picture |
+| `Return` | enter a folder or an image, or play a SID tune, a tracker module or an IFF sample |
 | `⇧Return` | force the SID player on, entering the addresses by hand |
 | `⌘O` | open it with the app macOS uses for it |
 | `⌥⌘R` | show it in Finder |
@@ -326,10 +326,11 @@ geometry is not, since it depends on what the file is. At most 1 MB is drawn.
 
 ### IFF pictures
 
-`Return` on an Amiga picture opens it, the same key that plays a tune. The
-viewer's Image mode draws it in its own colours — the one thing in this browser
-that is not two colours tinted from the theme, because a picture brought its
-own thirty-two and the point of showing it is to see them.
+The viewer's Image mode draws a picture in its own colours — the one thing in
+this browser that is not two colours tinted from the theme, because a picture
+brought its own thirty-two and the point of showing it is to see them. `Return`
+plays and `F3` views, so a picture is `F3`; pressing `Return` on one says so
+rather than reporting it as a tune it does not recognise.
 
 An Amiga held a picture as one bitplane per bit of depth, every plane a full
 page of its own, and a pixel's colour index is one bit taken from the same
@@ -380,6 +381,7 @@ outright when neither matches, rather than guessed at.
 | Face Painter | `$4000` | 10004 | multicolour |
 | Run Paint | `$6000` | 10006 | multicolour |
 | Interpaint | `$4000` | 10003 / 9002 | multicolour or hires |
+| Paint Magic | `$3F8E` | 9332 | hires |
 | Amica Paint | `$4000` | packed | multicolour |
 | Blackmail FLI | `$3B00` | 17474 | multicolour, eight video matrices |
 | Raw bitmap | none | 10001 / 9000 | a screen dumped with no load address |
@@ -390,6 +392,14 @@ background colour — so they are a table rather than a decoder each. Amica Pain
 is the exception that has to be unpacked before any of it means anything, which
 is also how it is recognised: its size is whatever the picture compressed to,
 so it is unpacked on spec and claimed only if a whole picture comes out.
+
+Paint Magic is the odd shape in the table because it saves the picture inside
+the program that shows it: 114 bytes of display code first, which is exactly
+what puts the bitmap on the `$2000` boundary the VIC needs it on and the video
+matrix at `$6000`, with that page's tail — sprite pointers and all — still on
+the end of the file. There is no published description of it, so this one was
+worked out from a disk of them: the sizes account for every byte, and every
+picture on the disk comes out as what it is.
 
 **Hires** gives each 8x8 cell two colours out of the video matrix; **multicolour**
 trades half the horizontal resolution for four, the fourth coming from colour

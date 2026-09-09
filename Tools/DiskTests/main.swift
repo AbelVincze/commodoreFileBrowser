@@ -2236,6 +2236,23 @@ do {
               "and the raster line below it is still background")
     } catch { check(false, "Koala stride: \(error)") }
 
+    // Paint Magic saves the picture inside the program that shows it, which is
+    // why the bitmap starts 114 bytes in rather than at the front: the display
+    // code is what lands between the load address and the $2000 boundary the
+    // VIC needs the bitmap on.
+    var magic = [UInt8](repeating: 0, count: 9332)
+    magic[0] = 0x8E; magic[1] = 0x3F                 // load $3F8E
+    magic[2 + 114 + cell(0)] = 0b1010_0000
+    magic[2 + 8306] = 0x71                           // 7 yellow over 1 white
+    do {
+        let picture = try PictureLoader.decode(name: "01 ABEL", bytes: magic)
+        check(picture.format == "Paint Magic", "9332 bytes at $3F8E is \(picture.format)")
+        check(pixel(picture.image, 0, 0).map { $0 == colour(7) } == true,
+              "the bitmap starts past the display code")
+        check(pixel(picture.image, 1, 0).map { $0 == colour(1) } == true,
+              "and the video matrix past the gap at the end of it")
+    } catch { check(false, "Paint Magic: \(error)") }
+
     // The same bytes at Interpaint's address are Interpaint, not Koala.
     var interpaint = koala
     interpaint[1] = 0x40

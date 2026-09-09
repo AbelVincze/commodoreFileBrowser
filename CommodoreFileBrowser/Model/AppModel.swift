@@ -385,23 +385,18 @@ final class AppModel: ObservableObject {
                 beginModulePlay(module, named: item.title)
                 return
             }
-            // And a picture is the third. It is not a tune at all, so Return
-            // opens the viewer on it rather than a player — the same key, on
-            // the thing the file actually is.
-            if !manual, detected == nil, let form = IFFLoader.detect(bytes) {
-                if form.isPicture {
-                    sheet = .viewer(ViewerContent(title: item.title, data: payload.data,
-                                                  isPRG: false, startMode: .image))
-                    return
-                }
-                if case .eightSVX = form { beginSamplePlay(bytes, named: item.title); return }
+            // And an IFF sample is the third thing this key plays.
+            if !manual, detected == nil, let form = IFFLoader.detect(bytes),
+               case .eightSVX = form {
+                beginSamplePlay(bytes, named: item.title)
+                return
             }
-            // A C64 picture is a PRG like any other, so this has to come after
-            // the tune check: a SID is a PRG too, and being a tune wins.
-            if !manual, detected == nil,
-               C64Picture.detect(name: item.title, bytes: bytes) != nil {
-                sheet = .viewer(ViewerContent(title: item.title, data: payload.data,
-                                              isPRG: true, startMode: .image))
+            // Return plays; F3 views. A picture is recognised here only so the
+            // key can say which one it wants — reporting a Koala as an
+            // unrecognised tune is true and no help at all.
+            if requireTune, detected == nil,
+               PictureLoader.detect(name: item.title, bytes: bytes) != nil {
+                statusMessage = Self.notATuneButAPicture
                 return
             }
             // Say what to press instead, since Return otherwise looks as though
@@ -417,6 +412,7 @@ final class AppModel: ObservableObject {
     }
 
     private static let notATuneHint = "Not a recognised tune - ⇧⏎ for the player, ⌘O to open it"
+    private static let notATuneButAPicture = "That is a picture, not a tune - F3 to view it"
 
     /// Open the tracker sheet on a module the browser has identified.
     ///

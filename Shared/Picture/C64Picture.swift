@@ -119,6 +119,15 @@ enum C64Picture {
         C64PictureFormat(name: "Interpaint", extensions: ["ip", "iph"],
                          load: 0x4000, size: 9002, kind: .hires,
                          bitmap: 0, screen: 8000, colour: nil, background: nil),
+        // Paint Magic saves the picture inside the program that shows it: a
+        // hundred and fourteen bytes of display code first, which is what puts
+        // the bitmap on a $2000 boundary at $4000 and the video matrix at
+        // $6000, with the tail end of the VIC's page — sprite pointers and all
+        // — still on the end of the file. Worked out from a disk of them
+        // rather than from a specification, there being none to find.
+        C64PictureFormat(name: "Paint Magic", extensions: ["pmg"],
+                         load: 0x3F8E, size: 9332, kind: .hires,
+                         bitmap: 114, screen: 8306, colour: nil, background: nil),
         // Screen first, and both pieces padded up to whole pages.
         C64PictureFormat(name: "Doodle", extensions: ["dd", "ddl", "jj"],
                          load: 0x5C00, size: 9218, kind: .hires,

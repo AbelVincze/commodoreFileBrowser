@@ -104,6 +104,7 @@ because the names are never converted to ASCII for display.
 | `⇧Return` | force the SID player on, entering the addresses by hand |
 | `⌘O` | open it with the app macOS uses for it |
 | `⌥⌘R` | show it in Finder |
+| `⌘P` | print the listing in the active panel |
 | right click | open, open with, show in Finder, and the panel's own commands |
 | `→` | enter a folder or an image — never goes up |
 | `←` or `Delete` | go up — saving the image on the way out |
@@ -766,6 +767,36 @@ leaving the image without saving still undoes the lot.
 A `DEL` entry owns nothing — a scratched file's blocks go back to the disk and
 only the name is left — so directory art is read as the decoration it is and
 left alone.
+
+## Printing a listing
+
+`⌘P` prints what the active panel is showing, and prints it the way the panel
+draws it. A Commodore directory goes to paper out of the character ROM — the
+reverse-video header line, the block counts, the quoted names with whatever
+decoration is padding them out, the file types, the locks, and the count of
+free blocks the drive prints under them. It comes out in the half of the ROM
+the panel is currently in, so switching to lower case with `⇧⌘C` before
+printing prints in lower case. A host folder or an Amiga volume has no ROM
+behind it and is set in the system's monospaced face instead, in the same
+columns the panel shows: name, size, permission bits, date.
+
+On screen the glyphs are a bitmap, one image pixel per C64 pixel, because a
+screen has a pixel grid to line them up with. A printer does not — an 8 pixel
+glyph would land on fractions of a dot at 600 dpi — so on paper the same glyphs
+go down as rectangles, and stay square at any size.
+
+Size and columns are chosen in the print dialog itself, in a **Listing** pane
+beside the ones the printer provides, against the live preview:
+
+* **Size** is the side of one character cell, 5 to 16 points.
+* **Columns** runs the listing down the page once or twice. Two columns put a
+  disk with a long directory on one sheet — a full 1541 directory of 144
+  entries fits a single page at 8 points.
+
+A listing too wide for the column it has been given is drawn smaller so it
+still fits between the margins, which is what keeps two columns of a long
+Amiga listing on the paper rather than off the edge of it. Both choices are
+remembered for the next listing.
 
 ## Quick Look
 

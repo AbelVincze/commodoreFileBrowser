@@ -12,7 +12,7 @@ TODO:
 - file name entering, petscii input
 
 - quick look disk image (dir vith c64 font)
-- print dir
++- print dir
 
 fix
-- sid player if no more file and the last one is not recognized, after close, error message appears.
++- sid player if no more file and the last one is not recognized, after close, error message appears.

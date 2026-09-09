@@ -124,9 +124,16 @@ final class AppModel: ObservableObject {
     /// are objects of their own.
     @Published private(set) var canReorderEntries = false
 
+    /// True while the system print dialog is up. It is an AppKit sheet rather
+    /// than an `AppSheet`, so it has to say so for itself.
+    @Published private(set) var isPrinting = false
+    /// Held while the print sheet is up: AppKit calls back through it, and
+    /// nothing else keeps it alive.
+    private var printCompletion: PrintCompletion?
+
     /// True while anything modal is on screen. The error alert is not an
     /// `AppSheet` case, so "is a dialog up" has to name both of them.
-    var isPresentingModal: Bool { sheet != nil || alertMessage != nil }
+    var isPresentingModal: Bool { sheet != nil || alertMessage != nil || isPrinting }
 
     private var panelWatch: Set<AnyCancellable> = []
 
@@ -268,6 +275,10 @@ final class AppModel: ObservableObject {
         // have SwiftUI hold that sheet until the alert closed, and ⌘D would fall
         // through to the menu and move a panel nobody can see. Swallow the lot.
         if alertMessage != nil { return true }
+        // The print dialog is an AppKit sheet of the system's own. It holds the
+        // keyboard while it is up, and the panel behind it must not answer the
+        // arrow keys meant for the page preview.
+        if isPrinting { return false }
         if case .player = sheet { return handlePlayerKey(event) }
         if case .module = sheet { return handleModuleKey(event) }
         if case .sample = sheet { return handleSampleKey(event) }
@@ -1158,6 +1169,64 @@ final class AppModel: ObservableObject {
         } catch CocoaError.fileWriteFileExists {
             report("\"\(target.lastPathComponent)\" already exists in that folder.")
         } catch { fail(error) }
+    }
+
+    // MARK: - Printing
+
+    /// Print the listing the active panel is showing.
+    ///
+    /// The rows go to paper exactly as they are on screen: a Commodore
+    /// directory in the character ROM, in whichever half of it the panel is
+    /// currently drawing from, and everything else in the system's monospaced
+    /// face. Size and columns are chosen in the print dialog itself, against
+    /// its preview, rather than in a sheet of our own beforehand.
+    func printDirectory() {
+        guard !isPresentingModal else { return }
+        let job = DirectoryPrintJob.make(panel: activePanel, font: settings.font)
+        // Held to what the dialog can ask for, so a settings file from
+        // somewhere else cannot produce a page nothing will print.
+        let size = min(max(settings.printCellPoints, DirectoryPrintAccessory.sizeRange.lowerBound),
+                       DirectoryPrintAccessory.sizeRange.upperBound)
+        let columns = min(max(settings.printColumns, 1), 2)
+        let view = DirectoryPrintView(job: job, cellPoints: CGFloat(size),
+                                      columnCount: columns)
+
+        let info = NSPrintInfo.shared.copy() as! NSPrintInfo
+        info.topMargin = 36
+        info.bottomMargin = 36
+        info.leftMargin = 40
+        info.rightMargin = 40
+        // The view paginates itself, so AppKit is asked for neither.
+        info.horizontalPagination = .clip
+        info.verticalPagination = .clip
+        info.isHorizontallyCentered = false
+        info.isVerticallyCentered = false
+
+        let operation = NSPrintOperation(view: view, printInfo: info)
+        operation.jobTitle = job.title
+        operation.printPanel.options.formUnion([.showsPreview, .showsPaperSize,
+                                                .showsOrientation])
+        operation.printPanel.addAccessoryController(
+            DirectoryPrintAccessory(printView: view, cellPoints: size,
+                                    columnCount: columns) { [weak self] size, columns in
+                self?.settings.printCellPoints = size
+                self?.settings.printColumns = columns
+            })
+
+        isPrinting = true
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else {
+            operation.run()
+            isPrinting = false
+            return
+        }
+        let completion = PrintCompletion { [weak self] in
+            self?.isPrinting = false
+            self?.printCompletion = nil
+        }
+        printCompletion = completion
+        operation.runModal(for: window, delegate: completion,
+                           didRun: #selector(PrintCompletion.printOperationDidRun(_:success:contextInfo:)),
+                           contextInfo: nil)
     }
 
     // MARK: - Viewer

@@ -59,6 +59,12 @@ struct CommodoreFileBrowserApp: App {
                 Button("Show in Finder") { model.revealInFinder() }
                     .keyboardShortcut("r", modifiers: [.command, .option])
                 Divider()
+                // Prints what the active panel is showing. The size and the
+                // column count are settled in the print dialog itself, so there
+                // is nothing to ask before it opens.
+                Button("Print Directory…") { model.printDirectory() }
+                    .keyboardShortcut("p", modifiers: .command)
+                Divider()
                 Button("Unpack Archive to ADF") { model.unpackArchive() }
                 Divider()
                 Button("Copy to Other Panel") { model.beginTransfer(isMove: false) }

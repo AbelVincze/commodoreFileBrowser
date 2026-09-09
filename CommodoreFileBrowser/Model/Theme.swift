@@ -227,6 +227,12 @@ final class SettingsStore: ObservableObject {
     /// The module scope has its own two modes, so it needs its own setting.
     @Published var moduleScopeMode: String { didSet { save() } }
     @Published var sidVolume: Double { didSet { save() } }
+    /// How a printed listing is laid out: the side of one character cell in
+    /// points, and whether a page carries one column of the listing or two.
+    /// Remembered from the print dialog, since it is a habit rather than a
+    /// per-listing decision.
+    @Published var printCellPoints: Double { didSet { save() } }
+    @Published var printColumns: Int { didSet { save() } }
     /// Video export choices, stored as raw values for the same reason.
     @Published var exportResolution: String { didSet { save() } }
     @Published var exportAspect: String { didSet { save() } }
@@ -255,6 +261,8 @@ final class SettingsStore: ObservableObject {
         var exportResolution: String?
         var exportAspect: String?
         var exportSeconds: Double?
+        var printCellPoints: Double?
+        var printColumns: Int?
     }
 
     private static let key = "theme.v1"
@@ -285,6 +293,8 @@ final class SettingsStore: ObservableObject {
         exportResolution = stored?.exportResolution ?? VideoResolution.p720.rawValue
         exportAspect = stored?.exportAspect ?? VideoAspect.sixteenNine.rawValue
         exportSeconds = stored?.exportSeconds ?? 30
+        printCellPoints = stored?.printCellPoints ?? 8
+        printColumns = stored?.printColumns ?? 1
         loading = false
     }
 
@@ -300,7 +310,8 @@ final class SettingsStore: ObservableObject {
                             sidModel: sidModel, scopeEnabled: scopeEnabled, scopeMode: scopeMode,
                             moduleScopeMode: moduleScopeMode,
                             sidVolume: sidVolume, exportResolution: exportResolution,
-                            exportAspect: exportAspect, exportSeconds: exportSeconds)
+                            exportAspect: exportAspect, exportSeconds: exportSeconds,
+                            printCellPoints: printCellPoints, printColumns: printColumns)
         if let data = try? JSONEncoder().encode(stored) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

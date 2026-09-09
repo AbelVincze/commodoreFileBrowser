@@ -2792,6 +2792,51 @@ do {
     check(!model.left.items.contains { $0.title == "goodbye.txt" },
           "and redraws itself once the file has gone, without being asked")
 
+    // --- Stepping through tunes with a player sheet up ------------------
+    //
+    // An alert cannot be seen while a sheet is up, and one pending swallows
+    // every key, so a failure raised here used to leave ⌘↑ and ⌘↓ dead and
+    // the message waiting to spring out when the sheet was closed.
+    do {
+        let tunes = root.appendingPathComponent("tunes")
+        try fm.createDirectory(at: tunes, withIntermediateDirectories: true)
+        // Enough of a PSID for the player to open on, then a file recognisable
+        // as nothing, then one too short to be a tune at all.
+        var psid = Data("PSID".utf8)
+        psid.append(contentsOf: [0x00, 0x02, 0x00, 0x7C, 0x00, 0x76,
+                                 0x10, 0x00, 0x10, 0x00, 0x10, 0x03,
+                                 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])
+        psid.append(Data(repeating: 0x20, count: 96))
+        psid.append(Data(repeating: 0xEA, count: 2048))
+        try psid.write(to: tunes.appendingPathComponent("a.sid"))
+        try Data((0..<4096).map { UInt8($0 & 0x7F) })
+            .write(to: tunes.appendingPathComponent("m.bin"))
+        try Data([0x41]).write(to: tunes.appendingPathComponent("z.txt"))
+
+        model.left.navigate(to: .directory(tunes))
+        model.activeSide = .left
+        model.left.moveCursor(to: 1)
+        model.beginPlay(manual: false)
+        check(model.sheet != nil && model.alertMessage == nil, "the player opens on a tune")
+
+        model.playNeighbour(1)
+        check(model.activePanel.currentItem?.title == "m.bin" && model.alertMessage == nil,
+              "stepping onto a file it cannot recognise opens the player on it")
+
+        // Past the last one: the file after it is too short to play, so the
+        // step runs off the end.
+        model.playNeighbour(1)
+        check(model.alertMessage == nil, "stepping past the end raises no alert behind the sheet")
+        check(model.statusMessage == "Nothing below this to play", "and says why it did nothing")
+        check(model.activePanel.currentItem?.title == "m.bin", "leaving the cursor where it was")
+
+        model.playNeighbour(-1)
+        check(model.activePanel.currentItem?.title == "a.sid", "and stepping back up still works")
+        check(model.statusMessage.isEmpty, "clearing what the failed step said")
+        model.player.stop()
+        model.sheet = nil
+    }
+
     // The panels wrote their folder memory into this tool's own preferences
     // domain — not the app's, since the tool has no bundle — so it is cleared
     // rather than left behind in ~/Library/Preferences.

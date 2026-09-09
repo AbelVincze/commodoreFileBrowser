@@ -202,7 +202,20 @@ final class AppModel: ObservableObject {
     }
 
     private func fail(_ error: Error) {
-        alertMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        report((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+    }
+
+    /// Say what went wrong, somewhere it will actually be read.
+    ///
+    /// An alert raised while a sheet is up is worse than useless. SwiftUI holds
+    /// it back until the sheet goes, so nothing appears; and `handleKey`
+    /// swallows every key while one is pending, so the keyboard goes dead with
+    /// no sign of why. That is how stepping through tunes onto a file the
+    /// player could not read left ⌘↑ and ⌘↓ doing nothing, and the message
+    /// waiting to spring out once the sheet was closed. Behind a sheet the
+    /// panel footer is the one thing still in view, so it goes there instead.
+    private func report(_ message: String) {
+        if sheet == nil { alertMessage = message } else { statusMessage = message }
     }
 
     // MARK: - Character set chord
@@ -350,7 +363,7 @@ final class AppModel: ObservableObject {
             let bytes = [UInt8](payload.data)
             guard bytes.count > 2 else {
                 if requireTune { statusMessage = Self.notATuneHint; return }
-                alertMessage = "That file is too short to be a tune."
+                report("That file is too short to be a tune.")
                 return
             }
             let detected = manual ? nil : SIDTuneLoader.detect(name: item.title, data: bytes)
@@ -532,21 +545,33 @@ final class AppModel: ObservableObject {
         var index = activePanel.cursor
         while true {
             index += delta
-            guard items.indices.contains(index) else { return }   // stop at either end
+            // Either end of the list. Silence here reads as the keys having
+            // stopped working, so it says which end it is on instead.
+            guard items.indices.contains(index) else {
+                statusMessage = delta < 0 ? "Nothing above this to play"
+                                          : "Nothing below this to play"
+                return
+            }
             if isPlayable(items[index]) { break }
         }
         activePanel.moveCursor(to: index)
+        // A step that works clears whatever the last one said. Set before the
+        // play, so anything that one has to report survives.
+        statusMessage = ""
         beginPlay(manual: false)
     }
 
     /// A DEL entry is a rule drawn in a directory listing, not a file, so
-    /// stepping through tunes has to pass over it.
+    /// stepping through tunes has to pass over it. So is anything too short to
+    /// hold a tune: two bytes are a load address and nothing else, and the
+    /// player refuses them, so stepping goes over those rather than landing on
+    /// a file it can only complain about.
     private func isPlayable(_ item: PanelItem) -> Bool {
         switch item.kind {
-        case .file: return true
+        case .file: return item.byteSize > 2
         case .imageFile:
             guard let entry = item.cbm, entry.encoding == .petscii else { return false }
-            return entry.type != .del && item.byteSize > 0
+            return entry.type != .del && item.byteSize > 2
         default: return false
         }
     }
@@ -661,7 +686,7 @@ final class AppModel: ObservableObject {
         guard !items.isEmpty else { return }
         let destination = inactivePanel.location
         if case .volumes = destination {
-            alertMessage = "Choose a folder or an image on the other side first."
+            report("Choose a folder or an image on the other side first.")
             return
         }
         // The extension question only arises coming out of a Commodore image
@@ -932,7 +957,7 @@ final class AppModel: ObservableObject {
         case .image where activePanel.image?.supportsDirectories == true:
             sheet = .makeFolder
         default:
-            alertMessage = "This image has no directories, so there is nowhere to put a folder."
+            report("This image has no directories, so there is nowhere to put a folder.")
         }
     }
 
@@ -954,7 +979,7 @@ final class AppModel: ObservableObject {
 
     func beginNewImage() {
         guard case .directory = activePanel.location else {
-            alertMessage = "Open a folder in the active panel to create an image in it."
+            report("Open a folder in the active panel to create an image in it.")
             return
         }
         sheet = .newImage
@@ -983,7 +1008,7 @@ final class AppModel: ObservableObject {
 
     func beginEditHeader() {
         guard activePanel.image != nil else {
-            alertMessage = "Open a disk image to edit its header."
+            report("Open a disk image to edit its header.")
             return
         }
         sheet = .diskHeader
@@ -993,9 +1018,9 @@ final class AppModel: ObservableObject {
     /// written until the sheet is confirmed.
     func beginRepairDisk() {
         guard let image = repairableImage else {
-            alertMessage = activePanel.image == nil
-                ? "Open a Commodore disk image to repair it."
-                : "Only a writable Commodore image has a BAM to repair."
+            report(activePanel.image == nil
+                   ? "Open a Commodore disk image to repair it."
+                   : "Only a writable Commodore image has a BAM to repair.")
             return
         }
         repairPlan = image.analyseForRepair()
@@ -1116,11 +1141,11 @@ final class AppModel: ObservableObject {
         else { source = nil }
 
         guard let source, source.pathExtension.lowercased() == "dms" else {
-            alertMessage = "Choose a DMS archive to unpack."
+            report("Choose a DMS archive to unpack.")
             return
         }
         guard case .directory(let destination) = inactivePanel.location else {
-            alertMessage = "Open a folder on the other side to unpack the archive into."
+            report("Open a folder on the other side to unpack the archive into.")
             return
         }
         let target = destination.appendingPathComponent(
@@ -1131,7 +1156,7 @@ final class AppModel: ObservableObject {
             inactivePanel.refresh()
             statusMessage = "Unpacked \(target.lastPathComponent)"
         } catch CocoaError.fileWriteFileExists {
-            alertMessage = "\"\(target.lastPathComponent)\" already exists in that folder."
+            report("\"\(target.lastPathComponent)\" already exists in that folder.")
         } catch { fail(error) }
     }
 

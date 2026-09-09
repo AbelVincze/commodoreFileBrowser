@@ -2072,17 +2072,17 @@ do {
     do {
         let box = CGSize(width: 720, height: 520)
         // A lores 320x200 at 10:11 is 320x220 true to shape, so it doubles.
-        let lores = ILBMImage.displaySize(width: 320, height: 200, heightScale: 1.1, within: box)
+        let lores = DecodedPicture.displaySize(width: 320, height: 200, heightScale: 1.1, within: box)
         check(lores == CGSize(width: 640, height: 440), "320x200 lores is drawn at \(lores)")
         // Hires 640x200 has half-width pixels: 640x440, which already fits.
-        let hires = ILBMImage.displaySize(width: 640, height: 200, heightScale: 2.2, within: box)
+        let hires = DecodedPicture.displaySize(width: 640, height: 200, heightScale: 2.2, within: box)
         check(hires == CGSize(width: 640, height: 440), "640x200 hires is drawn at \(hires)")
         // Bigger than the box shrinks to fit, whole steps or not.
-        let big = ILBMImage.displaySize(width: 1440, height: 1024, heightScale: 1, within: box)
+        let big = DecodedPicture.displaySize(width: 1440, height: 1024, heightScale: 1, within: box)
         check(big.width <= box.width && big.height <= box.height && big.width == 720,
               "a 1440x1024 picture is shrunk to \(big)")
         // A tiny brush grows a long way, but still by a whole number.
-        let brush = ILBMImage.displaySize(width: 28, height: 17, heightScale: 1, within: box)
+        let brush = DecodedPicture.displaySize(width: 28, height: 17, heightScale: 1, within: box)
         check(brush.width.truncatingRemainder(dividingBy: 28) == 0,
               "a 28x17 brush grows by a whole number to \(brush)")
     }
@@ -2172,6 +2172,144 @@ do {
     }
 } catch {
     print("  FAIL IFF: \(error)"); failures += 1
+}
+
+// --- C64 pictures -----------------------------------------------------------
+print("\n=== C64 pictures")
+do {
+    func pixel(_ image: CGImage, _ x: Int, _ y: Int) -> (Int, Int, Int)? {
+        guard let c = NSBitmapImageRep(cgImage: image).colorAt(x: x, y: y) else { return nil }
+        return (Int(c.redComponent * 255 + 0.5),
+                Int(c.greenComponent * 255 + 0.5),
+                Int(c.blueComponent * 255 + 0.5))
+    }
+    func colour(_ index: Int) -> (Int, Int, Int) {
+        let c = VICII.colours[index]
+        return (Int(c.0), Int(c.1), Int(c.2))
+    }
+    /// The bitmap byte holding the top row of the character cell at `column`
+    /// of the top character row.
+    func cell(_ column: Int) -> Int { column * 8 }
+
+    // A Koala: the first cell of the bitmap holds one of each bit pair, so the
+    // four sources of colour in multicolour mode are all exercised on one row.
+    var koala = [UInt8](repeating: 0, count: 10003)
+    koala[0] = 0x00; koala[1] = 0x60                 // load $6000
+    koala[2 + cell(0)] = 0b00_01_10_11               // background, screen high, low, colour
+    koala[2 + 8000] = 0x71                           // screen: 7 yellow over 1 white
+    koala[2 + 9000] = 0x0D                           // colour RAM: 13 light green
+    koala[2 + 10000] = 0x06                          // background: 6 blue
+
+    if let format = C64Picture.detect(name: "SUNSET", bytes: koala) {
+        check(format.name == "Koala Painter", "10003 bytes at $6000 is \(format.name)")
+    } else {
+        check(false, "a Koala is not recognised")
+    }
+    do {
+        let picture = try PictureLoader.decode(name: "SUNSET", bytes: koala)
+        check(picture.width == 320 && picture.height == 200,
+              "a Koala is \(picture.width) × \(picture.height)")
+        // Every pair is two screen pixels wide, so read the first of each.
+        check(pixel(picture.image, 0, 0).map { $0 == colour(6) } == true, "00 is the background")
+        check(pixel(picture.image, 2, 0).map { $0 == colour(7) } == true, "01 is the screen's high nibble")
+        check(pixel(picture.image, 4, 0).map { $0 == colour(1) } == true, "10 is its low nibble")
+        check(pixel(picture.image, 6, 0).map { $0 == colour(13) } == true, "11 is colour RAM")
+        check(pixel(picture.image, 1, 0).map { $0 == colour(6) } == true,
+              "and a multicolour pixel is two screen pixels wide")
+        check(abs(picture.heightScale - VICII.pixelHeightScale) < 0.0001,
+              "a C64 picture carries the PAL pixel shape")
+    } catch { check(false, "Koala: \(error)") }
+
+    // A cell well away from the origin, which is what catches a row stride
+    // taken for a cell stride: character row 7, column 11, the fifth raster
+    // line down, with that cell's own colour RAM entry to read. Nothing else
+    // out there is set, so it is the only pixel that may differ from the
+    // background.
+    var stride = koala
+    stride[2 + (7 * 40 + 11) * 8 + 4] = 0b11_00_00_00
+    stride[2 + 9000 + 7 * 40 + 11] = 0x0D
+    do {
+        let picture = try PictureLoader.decode(name: "PIC", bytes: stride)
+        check(pixel(picture.image, 11 * 8, 7 * 8 + 4).map { $0 == colour(13) } == true,
+              "a cell 7 rows down and 11 across lands where it should")
+        check(pixel(picture.image, 11 * 8, 7 * 8 + 5).map { $0 == colour(6) } == true,
+              "and the raster line below it is still background")
+    } catch { check(false, "Koala stride: \(error)") }
+
+    // The same bytes at Interpaint's address are Interpaint, not Koala.
+    var interpaint = koala
+    interpaint[1] = 0x40
+    check(C64Picture.detect(name: "PIC", bytes: interpaint)?.name == "Interpaint",
+          "the load address is what tells two identical layouts apart")
+
+    // Art Studio: one bit a pixel, both colours out of the video matrix.
+    var studio = [UInt8](repeating: 0, count: 9009)
+    studio[0] = 0x00; studio[1] = 0x20               // load $2000
+    studio[2 + cell(0)] = 0b1010_0000
+    studio[2 + 8000] = 0x2F                          // 2 red set, 15 light grey clear
+    do {
+        let picture = try PictureLoader.decode(name: "PIC", bytes: studio)
+        check(picture.format == "Art Studio", "9009 bytes at $2000 is \(picture.format)")
+        check(pixel(picture.image, 0, 0).map { $0 == colour(2) } == true, "a set bit is the high nibble")
+        check(pixel(picture.image, 1, 0).map { $0 == colour(15) } == true, "and a clear bit the low one")
+    } catch { check(false, "Art Studio: \(error)") }
+
+    // Doodle puts the video matrix first and pads both pieces to whole pages.
+    var doodle = [UInt8](repeating: 0, count: 9218)
+    doodle[0] = 0x00; doodle[1] = 0x5C               // load $5C00
+    doodle[2 + 1024 + cell(0)] = 0b1000_0000
+    doodle[2 + 0] = 0x2F
+    do {
+        let picture = try PictureLoader.decode(name: "PIC", bytes: doodle)
+        check(picture.format == "Doodle", "9218 bytes at $5C00 is \(picture.format)")
+        check(pixel(picture.image, 0, 0).map { $0 == colour(2) } == true,
+              "the screen comes before the bitmap")
+    } catch { check(false, "Doodle: \(error)") }
+
+    // FLI: eight video matrices, one per raster line of the character row, and
+    // the leftmost three columns cut off as the artefact they are.
+    var fli = [UInt8](repeating: 0, count: 17474)
+    fli[0] = 0x00; fli[1] = 0x3B                     // load $3B00
+    for line in 0..<8 {
+        fli[2 + 0x2500 + cell(3) + line] = 0b0101_0101      // every pair is 01
+        fli[2 + 0x500 + line * 1024 + 3] = UInt8(line << 4) // a different colour each line
+    }
+    do {
+        let picture = try PictureLoader.decode(name: "PIC", bytes: fli)
+        check(picture.format == "Blackmail FLI", "17474 bytes at $3B00 is \(picture.format)")
+        check(picture.width == 296, "the FLI bug columns are cut, leaving \(picture.width)")
+        check(pixel(picture.image, 0, 0).map { $0 == colour(0) } == true,
+              "column 3 is the first one drawn")
+        check(pixel(picture.image, 0, 3).map { $0 == colour(3) } == true,
+              "and each raster line reads its own video matrix")
+    } catch { check(false, "FLI: \(error)") }
+
+    // Amica Paint: Koala's layout, run through a byte packer. Everything after
+    // the bitmap's opening cell is one long run of zeroes.
+    var amica: [UInt8] = [0x00, 0x40]
+    amica += [0b00_01_10_11]
+    var left = 10001 - 1
+    while left > 0 {
+        let run = min(left, 255)
+        amica += [0xC2, UInt8(run), 0x00]
+        left -= run
+    }
+    amica += [0xC2, 0x00]
+    check(C64Picture.unpackAmica(amica)?.count == 10001, "an Amica Paint file unpacks to a picture")
+    check(C64Picture.detect(name: "PIC", bytes: amica)?.name == "Amica Paint",
+          "and is recognised by unpacking rather than by its size")
+    check(C64Picture.unpackAmica([0x00, 0x40, 0x41, 0x42]) == nil,
+          "a short file at the same address is not claimed")
+
+    // Nothing else is. The sizes are exact and the addresses with them.
+    check(C64Picture.detect(name: "PIC", bytes: [UInt8](repeating: 0, count: 10003)) == nil,
+          "10003 bytes at $0000 is not a Koala")
+    check(C64Picture.detect(name: "HELLO", bytes: [0x01, 0x08] + [UInt8](repeating: 0x41, count: 2000)) == nil,
+          "an ordinary PRG is not claimed")
+    var short = koala
+    short.removeLast(3)
+    check(C64Picture.detect(name: "SUNSET", bytes: short) == nil,
+          "and neither is a Koala three bytes short of one")
 }
 
 // --- 8SVX -------------------------------------------------------------------

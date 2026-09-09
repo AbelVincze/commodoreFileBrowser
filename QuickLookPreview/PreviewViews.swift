@@ -12,8 +12,7 @@ let previewPictureBox = CGSize(width: 720, height: 520)
 /// A picture, at the shape it was drawn as.
 struct PicturePreview: View {
     let name: String
-    let picture: ILBMImage
-    let form: IFFForm
+    let picture: DecodedPicture
 
     var body: some View {
         VStack(spacing: 10) {
@@ -35,9 +34,8 @@ struct PicturePreview: View {
     }
 
     private var caption: String {
-        var parts = [name, "\(picture.width) × \(picture.height)", picture.mode]
-        if case .anim(let frames) = form { parts.append("first of \(frames) frames") }
-        return parts.joined(separator: " · ")
+        [name, picture.format, "\(picture.width) × \(picture.height)", picture.mode]
+            .joined(separator: " · ")
     }
 }
 

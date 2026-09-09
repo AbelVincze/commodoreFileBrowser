@@ -385,9 +385,9 @@ final class AppModel: ObservableObject {
                 beginModulePlay(module, named: item.title)
                 return
             }
-            // And an Amiga picture is the third. It is not a tune at all, so
-            // Return opens the viewer on it rather than a player — the same
-            // key, on the thing the file actually is.
+            // And a picture is the third. It is not a tune at all, so Return
+            // opens the viewer on it rather than a player — the same key, on
+            // the thing the file actually is.
             if !manual, detected == nil, let form = IFFLoader.detect(bytes) {
                 if form.isPicture {
                     sheet = .viewer(ViewerContent(title: item.title, data: payload.data,
@@ -395,6 +395,14 @@ final class AppModel: ObservableObject {
                     return
                 }
                 if case .eightSVX = form { beginSamplePlay(bytes, named: item.title); return }
+            }
+            // A C64 picture is a PRG like any other, so this has to come after
+            // the tune check: a SID is a PRG too, and being a tune wins.
+            if !manual, detected == nil,
+               C64Picture.detect(name: item.title, bytes: bytes) != nil {
+                sheet = .viewer(ViewerContent(title: item.title, data: payload.data,
+                                              isPRG: true, startMode: .image))
+                return
             }
             // Say what to press instead, since Return otherwise looks as though
             // it did nothing at all.
@@ -1241,7 +1249,10 @@ final class AppModel: ObservableObject {
             // it is a picture opens on the picture: a hex dump of an ILBM is
             // not what anyone pressed F3 for.
             var start: ViewerMode = bitmap ? .bitmap : .hex
-            if !bitmap, IFFLoader.detect([UInt8](payload.data))?.isPicture == true { start = .image }
+            if !bitmap,
+               PictureLoader.detect(name: item.title, bytes: [UInt8](payload.data)) != nil {
+                start = .image
+            }
             sheet = .viewer(ViewerContent(title: item.title, data: payload.data,
                                           isPRG: isPRG, startMode: start))
         } catch { fail(error) }

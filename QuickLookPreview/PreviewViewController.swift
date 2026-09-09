@@ -28,8 +28,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         // grew up in; here there is no history to keep.
         if let form = IFFLoader.detect(bytes) {
             if form.isPicture {
-                let picture = try ILBMDecoder.decode(bytes)
-                show(PicturePreview(name: name, picture: picture, form: form))
+                let picture = try PictureLoader.decode(name: name, bytes: bytes)
+                show(PicturePreview(name: name, picture: picture))
                 return
             }
             let sound = try EightSVXDecoder.decode(bytes)
@@ -69,6 +69,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             show(SoundPreview(name: module.title.isEmpty ? name : module.title,
                               detail: moduleDetail(module, player: player),
                               player: .module(player)))
+            return
+        }
+
+        // Last, because it is the only guess in here: a C64 picture has no
+        // header saying so and is recognised by its size and load address
+        // alone, which is a weaker claim than any of the above.
+        if C64Picture.detect(name: name, bytes: bytes) != nil {
+            let picture = try PictureLoader.decode(name: name, bytes: bytes)
+            show(PicturePreview(name: name, picture: picture))
             return
         }
 

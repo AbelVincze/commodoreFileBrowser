@@ -1,12 +1,13 @@
 import SwiftUI
 import AppKit
 
-/// The viewer's Image mode: an Amiga picture drawn in its own colours.
+/// The viewer's Image mode: a picture drawn in its own colours.
 ///
 /// The only pane in the browser that does not tint a template with a palette
-/// role. Everything else here is two colours by design; a picture brought its
-/// own thirty-two, and the point of showing it is to see them.
-struct IFFImagePane: View {
+/// role. Everything else here is two colours by design; an Amiga picture
+/// brought its own thirty-two and a C64 one the VIC-II's sixteen, and the
+/// point of showing either is to see them.
+struct PicturePane: View {
     let bytes: [UInt8]
     let fileName: String
     let palette: Palette
@@ -16,7 +17,7 @@ struct IFFImagePane: View {
     /// Decoding is kept in state rather than computed from `body`, which is
     /// re-evaluated on every zoom step; unpacking a 640x400 body each time
     /// would make the stepper crawl.
-    @State private var decoded: ILBMImage?
+    @State private var decoded: DecodedPicture?
     @State private var failure: String?
 
     var body: some View {
@@ -33,7 +34,7 @@ struct IFFImagePane: View {
 
     private func rebuild() {
         do {
-            decoded = try ILBMDecoder.decode(bytes)
+            decoded = try PictureLoader.decode(name: fileName, bytes: bytes)
             failure = nil
         } catch {
             decoded = nil
@@ -79,6 +80,7 @@ struct IFFImagePane: View {
                 VStack(alignment: .leading, spacing: 10) {
                     section("Picture")
                     if let decoded {
+                        readout("Format", decoded.format)
                         readout("Size", "\(decoded.width) × \(decoded.height)")
                         ForEach(Array(decoded.mode.components(separatedBy: " · ").enumerated()),
                                 id: \.offset) { _, part in
@@ -102,8 +104,10 @@ struct IFFImagePane: View {
                     Toggle("Correct aspect", isOn: $correctAspect)
                         .font(.system(size: 11))
                         .fixedSize()
-                        .help("Amiga pixels were not square. On, the picture is "
-                              + "the shape it was drawn as; off, one pixel is one pixel.")
+                        .help("Neither machine had square pixels. On, the picture is "
+                              + "the shape it was drawn as — the aspect an IFF records, "
+                              + "or the PAL ratio a C64 picture does not. Off, one pixel "
+                              + "is one pixel.")
                     Spacer(minLength: 0)
                 }
                 .padding(12)
@@ -141,7 +145,7 @@ struct IFFImagePane: View {
         }
     }
 
-    /// The picture as it is, at one image pixel per Amiga pixel: the zoom and
+    /// The picture as it is, one image pixel per picture pixel: the zoom and
     /// the aspect correction are how it is being looked at, not what it is.
     private func savePNG() {
         guard let decoded else { return }

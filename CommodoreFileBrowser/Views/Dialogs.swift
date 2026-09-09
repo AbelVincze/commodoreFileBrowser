@@ -871,13 +871,14 @@ struct ViewerSheet: View {
                            layout: $layout,
                            displayOffset: $displayOffset)
             case .image:
-                // An IFF carries no load address either, and its own header
-                // says where the pixels start.
-                IFFImagePane(bytes: [UInt8](content.data),
-                             fileName: content.title,
-                             palette: palette,
-                             zoom: $imageZoom,
-                             correctAspect: $correctAspect)
+                // A picture carries no load address the dump would want to
+                // skip: an IFF says in its own header where the pixels start,
+                // and a C64 picture's load address is how it is recognised.
+                PicturePane(bytes: [UInt8](content.data),
+                            fileName: content.title,
+                            palette: palette,
+                            zoom: $imageZoom,
+                            correctAspect: $correctAspect)
             case .basic:
                 // A listing always starts after the load address, so the
                 // Raw/C64 switch has nothing to say about it.

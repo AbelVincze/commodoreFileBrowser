@@ -100,7 +100,7 @@ because the names are never converted to ASCII for display.
 | `Tab` | switch panels |
 | `Space` | mark the file under the cursor |
 | `+` `-` `*` | mark all, unmark all, invert |
-| `Return` | enter a folder or an image, play a SID tune, a tracker module or an IFF sample, or show an IFF picture |
+| `Return` | enter a folder or an image, play a SID tune, a tracker module or an IFF sample, or show an Amiga or C64 picture |
 | `⇧Return` | force the SID player on, entering the addresses by hand |
 | `⌘O` | open it with the app macOS uses for it |
 | `⌥⌘R` | show it in Finder |
@@ -259,9 +259,9 @@ is describing a place that is no longer on screen.
 ## The viewer
 
 `F3` opens a file in the viewer; `⇧F3` opens it straight into the bitmap. A
-Hex / Bitmap / Image / Basic switch moves between the four modes. An Amiga
-picture opens on itself rather than on a hex dump of itself — `F3` on an ILBM
-starts in Image, which is what pressing it on a picture plainly meant.
+Hex / Bitmap / Image / Basic switch moves between the four modes. A picture
+opens on itself rather than on a hex dump of itself — `F3` on an ILBM or a
+Koala starts in Image, which is what pressing it on a picture plainly meant.
 
 A **Raw/C64** switch decides what the first two bytes mean. C64, the default,
 reads them as the load address, starts the offsets there and dumps from the
@@ -356,6 +356,56 @@ whatever the zoom.
 A `FORM ILBM` holding a palette and no pixels — how DPaint saved its `.col`
 files — is not claimed as a picture. Neither is a truncated one refused: half a
 picture is drawn as far as it goes.
+
+### C64 pictures
+
+The same Image mode draws what the C64's painters saved. None of these files
+has a header, a magic number or anything else that says what it is: a painter
+of the day dumped the VIC-II's memory to disk and the loader put it back. So a
+format is recognised by its exact size and its load address together, which is
+narrow enough that an ordinary program almost never falls into it — and refused
+outright when neither matches, rather than guessed at.
+
+| Format | Load | Size | |
+|---|---|---|---|
+| Koala Painter | `$6000` | 10003 | multicolour |
+| Advanced Art Studio | `$2000` | 10018 | multicolour |
+| Art Studio | `$2000` | 9009 | hires |
+| Doodle | `$5C00` | 9218 | hires |
+| Hi-Eddi | `$A000` | 9002 | hires |
+| Face Painter | `$4000` | 10004 | multicolour |
+| Run Paint | `$6000` | 10006 | multicolour |
+| Interpaint | `$4000` | 10003 / 9002 | multicolour or hires |
+| Amica Paint | `$4000` | packed | multicolour |
+| Blackmail FLI | `$3B00` | 17474 | multicolour, eight video matrices |
+| Raw bitmap | none | 10001 / 9000 | a screen dumped with no load address |
+
+Almost all of them are the same four pieces in a different order — an 8000 byte
+bitmap, a 1000 byte video matrix, 1000 bytes of colour RAM and a byte of
+background colour — so they are a table rather than a decoder each. Amica Paint
+is the exception that has to be unpacked before any of it means anything, which
+is also how it is recognised: its size is whatever the picture compressed to,
+so it is unpacked on spec and claimed only if a whole picture comes out.
+
+**Hires** gives each 8x8 cell two colours out of the video matrix; **multicolour**
+trades half the horizontal resolution for four, the fourth coming from colour
+RAM and the first being the one background colour the whole screen shares.
+**FLI** is the trick of handing the chip a fresh video matrix on every raster
+line, so a cell gets eight colours instead of two — at the cost of the leftmost
+three character columns, which the chip has no time left to fetch. Those are
+cut, which is why an FLI picture comes out 296 wide.
+
+The colours are Colodore's, the measurements of a real machine most emulators
+and modern C64 tools agree on. The VIC-II had no palette to read: its sixteen
+colours were fixed in silicon, and every RGB set for them is somebody's
+photograph of a television.
+
+**Correct aspect** matters more here than on the Amiga, because nothing in any
+of these files records the pixel shape — it was a property of the television,
+not of the picture. On, a picture is drawn at the PAL ratio; off, one pixel is
+one square pixel. A multicolour picture is drawn 320 wide either way, with its
+pixels the two screen pixels wide they really were, rather than squeezed into
+160 and stretched back out.
 
 ### IFF samples
 
@@ -802,9 +852,9 @@ remembered for the next listing.
 
 Two app extensions put the same readers behind Finder's space bar.
 
-**Thumbnails.** An IFF picture becomes its own icon, drawn at the shape it was
-meant to have rather than squared off. A folder of ILBMs reads as pictures
-instead of as a wall of blank pages. It compiles the picture reader and nothing
+**Thumbnails.** A picture becomes its own icon, drawn at the shape it was
+meant to have rather than squared off. A folder of ILBMs or Koalas reads as
+pictures instead of as a wall of blank pages. It compiles the picture reader and nothing
 else — no emulator, no engines — because a thumbnail is asked for a folder at a
 time and the system will not wait while something warms up.
 
@@ -817,8 +867,9 @@ leave ten running.
 Both decide what a file is from its own bytes. What they cannot do is decide
 which files to be offered in the first place: Quick Look routes by type, and a
 type comes from the extension on the name. `.iff`, `.ilbm`, `.lbm`, `.anim`,
-`.8svx`, `.sid`, `.mod`, `.xm`, `.s3m`, `.it`, `.med` and a few more are
-declared and work. An Amiga file called `mod.something` or `pic.1` does not:
+`.8svx`, `.sid`, `.mod`, `.xm`, `.s3m`, `.it`, `.med`, `.koa`, `.kla`, `.ocp`,
+`.aas`, `.hed`, `.dd`, `.fcp`, `.ami`, `.bml` and a few more are declared and
+work. An Amiga file called `mod.something` or `pic.1` does not:
 its extension is the tune's name, so macOS has nothing to match. Those are what
 the browser itself is for, where `Return` reads the bytes instead.
 

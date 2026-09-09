@@ -9,6 +9,7 @@
 			<key>QLSupportedContentTypes</key>
 			<array>
 				<string>hu.iparigrafika.iff</string>
+				<string>hu.iparigrafika.c64-picture</string>
 			</array>
 			<key>QLThumbnailMinimumDimension</key>
 			<integer>0</integer>

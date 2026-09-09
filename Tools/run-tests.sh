@@ -62,6 +62,7 @@ swiftc -O -o "$OUT" \
     CommodoreFileBrowser/Core/*.swift \
     CommodoreFileBrowser/Disk/*.swift \
     CommodoreFileBrowser/Model/*.swift \
+    CommodoreFileBrowser/Print/*.swift \
     CommodoreFileBrowser/DragDrop/*.swift \
     CommodoreFileBrowser/Views/*.swift \
     CommodoreFileBrowser/Audio/*.swift \

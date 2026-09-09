@@ -12,41 +12,6 @@ import AppKit
 /// its left. Both exist to get more colours out of a palette than the palette
 /// has room for, and neither can be decoded without knowing which is meant,
 /// which is what CAMG is for.
-struct ILBMImage {
-    var width: Int
-    var height: Int
-    /// How much taller than wide a pixel of this picture is, from the aspect
-    /// the file records. 1 for a square pixel, 2.2 for a hires one.
-    var heightScale: CGFloat
-    /// For the viewer's subtitle: "6 planes · EHB · 64 colours".
-    var mode: String
-    /// Kept as a `CGImage`: the viewer wraps it for SwiftUI, the thumbnail
-    /// extension draws it into the context Quick Look hands over, and neither
-    /// wants the other's wrapper.
-    var image: CGImage
-
-    /// How large to draw the picture inside `box`, aspect corrected.
-    ///
-    /// Shrinking is free, but growing goes in whole steps: a picture drawn a
-    /// pixel at a time looks wrong at 1.37 times, where some rows are two
-    /// screen pixels tall and their neighbours three. A 320x200 lores picture
-    /// comes out at 2x or 3x rather than at whatever happened to fit.
-    func displaySize(within box: CGSize) -> CGSize {
-        Self.displaySize(width: width, height: height, heightScale: heightScale, within: box)
-    }
-
-    static func displaySize(width: Int, height: Int,
-                            heightScale: CGFloat, within box: CGSize) -> CGSize {
-        let wide = CGFloat(width)
-        let tall = CGFloat(height) * heightScale
-        guard wide > 0, tall > 0 else { return box }
-        let fit = min(box.width / wide, box.height / tall)
-        let scale = fit >= 1 ? floor(fit) : fit
-        return CGSize(width: max(1, (wide * scale).rounded()),
-                      height: max(1, (tall * scale).rounded()))
-    }
-}
-
 enum ILBMDecoder {
 
     /// Refused rather than guessed at, and said out loud: a picture that comes
@@ -85,7 +50,7 @@ enum ILBMDecoder {
 
     /// Decodes the picture in `bytes`, which may be an ILBM or an ANIM whose
     /// first frame is one.
-    static func decode(_ bytes: [UInt8]) throws -> ILBMImage {
+    static func decode(_ bytes: [UInt8]) throws -> DecodedPicture {
         guard let form = IFFLoader.pictureForm(bytes) else { throw Failure.notAPicture }
         guard let bmhd = IFF.chunk("BMHD", in: form.chunks) else { throw Failure.noHeader }
         guard let body = IFF.chunk("BODY", in: form.chunks) else { throw Failure.noBody }
@@ -123,10 +88,12 @@ enum ILBMDecoder {
         guard let image = PixelImage.make(rgba: rgba, width: head.width, height: head.height) else {
             throw Failure.unreasonable(head.width, head.height, head.planes)
         }
-        return ILBMImage(width: head.width, height: head.height,
-                         heightScale: aspect(head),
-                         mode: modeText(head, isHAM: isHAM, isEHB: isEHB, colours: palette.count),
-                         image: image)
+        return DecodedPicture(width: head.width, height: head.height,
+                              heightScale: aspect(head),
+                              format: "IFF ILBM",
+                              mode: modeText(head, isHAM: isHAM, isEHB: isEHB,
+                                             colours: palette.count),
+                              image: image)
     }
 
     // MARK: - The header chunks

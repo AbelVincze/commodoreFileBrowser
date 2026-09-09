@@ -9,6 +9,7 @@
 			<key>QLSupportedContentTypes</key>
 			<array>
 				<string>hu.iparigrafika.iff</string>
+				<string>hu.iparigrafika.c64-picture</string>
 				<string>hu.iparigrafika.sid</string>
 				<string>hu.iparigrafika.tracker-module</string>
 			</array>

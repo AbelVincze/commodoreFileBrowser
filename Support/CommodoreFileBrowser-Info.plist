@@ -34,6 +34,42 @@
 		</dict>
 		<dict>
 			<key>UTTypeIdentifier</key>
+			<string>hu.iparigrafika.c64-picture</string>
+			<key>UTTypeDescription</key>
+			<string>Commodore 64 picture</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<!-- One type for every C64 painter: none of these files has a
+				     header of its own, so the extension is only a routing hint
+				     and the bytes decide which format it really is. -->
+				<key>public.filename-extension</key>
+				<array>
+					<string>koa</string>
+					<string>kla</string>
+					<string>ocp</string>
+					<string>art</string>
+					<string>aas</string>
+					<string>hpi</string>
+					<string>hed</string>
+					<string>dd</string>
+					<string>ddl</string>
+					<string>jj</string>
+					<string>fcp</string>
+					<string>rpm</string>
+					<string>ipt</string>
+					<string>iph</string>
+					<string>ami</string>
+					<string>bml</string>
+					<string>fli</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
 			<string>hu.iparigrafika.sid</string>
 			<key>UTTypeDescription</key>
 			<string>Commodore SID tune</string>

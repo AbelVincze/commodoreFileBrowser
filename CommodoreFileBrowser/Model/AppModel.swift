@@ -156,6 +156,14 @@ final class AppModel: ObservableObject {
 
     private var panelWatch: Set<AnyCancellable> = []
 
+    /// One file system watcher per panel, following whatever that panel is
+    /// showing. See `startWatching()`.
+    private let watchers: [PanelSide: FolderWatcher] = [.left: FolderWatcher(), .right: FolderWatcher()]
+    private var workspaceWatch: [NSObjectProtocol] = []
+    /// Sides whose listing went stale while a dialog was up, redrawn once it
+    /// comes down rather than underneath it.
+    private var deferredRefresh: Set<PanelSide> = []
+
     var activePanel: PanelModel { activeSide == .left ? left : right }
     var inactivePanel: PanelModel { activeSide == .left ? right : left }
     var inactiveSide: PanelSide { activeSide == .left ? .right : .left }
@@ -220,11 +228,144 @@ final class AppModel: ObservableObject {
         right.refresh()
     }
 
+    // MARK: - Changes made outside the app
+
+    /// Follow what happens on the file system while we are looking at it: a
+    /// file written in the Finder, a disk mounted or ejected, the folder a
+    /// panel is standing in thrown away.
+    ///
+    /// Started by the window rather than from `init` so the headless test
+    /// build never puts an event stream or a workspace observer up.
+    func startWatching() {
+        guard workspaceWatch.isEmpty else { return }
+
+        for panel in [left, right] {
+            rewatch(panel.side, at: panel.location)
+            // The location the sink is handed, rather than the one on the
+            // panel: `@Published` announces the move before it has landed.
+            panel.$location
+                .receive(on: RunLoop.main)
+                .sink { [weak self] location in self?.rewatch(panel.side, at: location) }
+                .store(in: &panelWatch)
+        }
+
+        let workspace = NSWorkspace.shared.notificationCenter
+        // A disk arriving or leaving changes the list of disks, and a rename
+        // changes what one of them is called.
+        for name in [NSWorkspace.didMountNotification,
+                     NSWorkspace.didUnmountNotification,
+                     NSWorkspace.didRenameVolumeNotification] {
+            workspaceWatch.append(workspace.addObserver(forName: name, object: nil, queue: .main) {
+                [weak self] note in self?.volumesChanged(note)
+            })
+        }
+        // Told before the disk goes, so a panel standing on it is out of the
+        // way while the eject is still something that can be got right.
+        workspaceWatch.append(
+            workspace.addObserver(forName: NSWorkspace.willUnmountNotification,
+                                  object: nil, queue: .main) { [weak self] note in
+                guard let volume = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
+                self?.leaveVolume(volume)
+            })
+        // The catch-all. FSEvents does not report everything everywhere —
+        // a network share is the usual gap — and coming back to the window is
+        // exactly when a stale listing would be noticed.
+        workspaceWatch.append(
+            NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                   object: nil, queue: .main) { [weak self] _ in
+                self?.fileSystemChanged(.left)
+                self?.fileSystemChanged(.right)
+            })
+
+        // Anything that went stale behind a dialog is redrawn when it closes.
+        $sheet
+            .receive(on: RunLoop.main)
+            .sink { [weak self] sheet in if sheet == nil { self?.flushDeferredRefresh() } }
+            .store(in: &panelWatch)
+        $alertMessage
+            .receive(on: RunLoop.main)
+            .sink { [weak self] message in if message == nil { self?.flushDeferredRefresh() } }
+            .store(in: &panelWatch)
+    }
+
+    /// Point a panel's watcher at whatever folder that panel now depends on.
+    private func rewatch(_ side: PanelSide, at location: PanelLocation) {
+        let folder: URL?
+        switch location {
+        // The list of disks is not a folder, and mounting is not a file system
+        // event: the workspace reports it instead.
+        case .volumes: folder = nil
+        case .directory(let url): folder = url
+        // An image was read into memory when it was opened, so what matters is
+        // the folder holding it, which is where its deletion shows up.
+        case .image(let url, _): folder = url.deletingLastPathComponent()
+        }
+        watchers[side]?.watch(folder) { [weak self] in
+            self?.fileSystemChanged(side)
+        }
+    }
+
+    private func fileSystemChanged(_ side: PanelSide) {
+        // A listing that shifts under an open dialog is the panel arguing with
+        // the question on screen. It waits.
+        guard !isPresentingModal else {
+            deferredRefresh.insert(side)
+            return
+        }
+        panel(side).externalRefresh()
+    }
+
+    private func flushDeferredRefresh() {
+        guard !deferredRefresh.isEmpty else { return }
+        let sides = deferredRefresh
+        deferredRefresh.removeAll()
+        for side in sides { panel(side).externalRefresh() }
+    }
+
+    /// A disk was mounted, ejected, or renamed.
+    private func volumesChanged(_ note: Notification) {
+        let volume = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
+        if let old = note.userInfo?[NSWorkspace.oldVolumeURLUserInfoKey] as? URL, let volume {
+            // A rename moves the path out from under a panel that is inside
+            // the disk; it is still the same disk, so it follows it there.
+            for panel in [left, right] { panel.rebase(from: old, to: volume) }
+        }
+        for panel in [left, right] {
+            if case .volumes = panel.location { fileSystemChanged(panel.side) }
+        }
+        if note.name == NSWorkspace.didUnmountNotification, let volume { leaveVolume(volume) }
+    }
+
+    /// Walk any panel standing on a disk off it, once that disk is gone or
+    /// about to be. Nothing else could be shown: the folder it was in stopped
+    /// existing along with the disk.
+    ///
+    /// An image open on a disk that has already gone is not committed on the
+    /// way out: an ejected mount point can leave an empty folder of the same
+    /// name behind on the boot disk, and the write would land in that. On the
+    /// warning that comes before an eject the disk is still there, so pending
+    /// edits still reach it.
+    private func leaveVolume(_ volume: URL) {
+        // The disk is gone, so its name is no longer readable from the path:
+        // the cursor is put on it by the name the mount point carried.
+        let gone = !FileManager.default.fileExists(atPath: volume.path)
+        for panel in [left, right] where panel.isInside(volume) {
+            panel.navigate(to: .volumes, focusOn: volume.lastPathComponent, keepChanges: !gone)
+        }
+    }
+
     func saveState() {
         left.saveLocation()
         right.saveLocation()
         try? left.image?.save()
         try? right.image?.save()
+    }
+
+    deinit {
+        for token in workspaceWatch {
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+            NotificationCenter.default.removeObserver(token)
+        }
     }
 
     private func fail(_ error: Error) {

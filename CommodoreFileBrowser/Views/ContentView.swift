@@ -42,6 +42,7 @@ struct ContentView: View {
         .preferredColorScheme(settings.appearance.colorScheme)
         .onAppear(perform: installKeyMonitor)
         .onAppear(perform: model.showSplashIfNeeded)
+        .onAppear(perform: model.startWatching)
         .onDisappear {
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil

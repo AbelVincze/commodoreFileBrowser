@@ -351,6 +351,100 @@ final class PanelModel: ObservableObject {
         }
     }
 
+    // MARK: - Changes made outside the app
+
+    /// Reread the listing because the file system changed under us, rather
+    /// than because of anything done here.
+    ///
+    /// Two rules separate this from `reload()`, and both are about not
+    /// disturbing someone who is reading the panel: a listing that comes back
+    /// the same is dropped rather than redrawn, and the cursor and the marks
+    /// are carried across by name so rows appearing or vanishing above them
+    /// do not move them.
+    func externalRefresh() {
+        switch location {
+        case .volumes:
+            apply(loadVolumes())
+        case .directory(let url):
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                escapeFromMissingLocation()
+                return
+            }
+            loadError = nil
+            apply(loadDirectory(url))
+        case .image(let url, _):
+            // An image is read into memory once and may be holding edits that
+            // are not on disk yet, so its listing is ours rather than the file
+            // system's. Only its disappearance is worth acting on.
+            if !FileManager.default.fileExists(atPath: url.path) { escapeFromMissingLocation() }
+        }
+    }
+
+    /// Swap in a freshly read listing, keeping the cursor on the row it was on
+    /// and the marks on the rows that are still there.
+    private func apply(_ fresh: [PanelItem]) {
+        guard Self.signature(fresh) != Self.signature(items) else { return }
+        let cursorName = currentItem?.title
+        let markedNames = Set(items.filter { marked.contains($0.id) }.map(\.title))
+        items = fresh
+        marked = Set(items.filter { markedNames.contains($0.title) }.map(\.id))
+        if let cursorName, let index = items.firstIndex(where: { $0.title == cursorName }) {
+            cursor = index
+        } else {
+            cursor = min(cursor, max(0, items.count - 1))
+        }
+    }
+
+    /// Everything a row puts on screen. What has to differ before the panel is
+    /// worth redrawing.
+    private static func signature(_ rows: [PanelItem]) -> [String] {
+        rows.map { "\($0.kind)\t\($0.title)\t\($0.detail)\t\($0.modified?.timeIntervalSince1970 ?? 0)" }
+    }
+
+    /// The folder we were standing in is gone — deleted, renamed, or on a disk
+    /// that was ejected. Walk out to the nearest folder that is still there,
+    /// the way you would have had you watched it happen, with the cursor on
+    /// the name that went missing.
+    func escapeFromMissingLocation() {
+        let missing = location.url?.lastPathComponent
+        var candidate = location.url?.deletingLastPathComponent()
+        while let url = candidate {
+            // A volume that went away is a volume, not a folder in /Volumes:
+            // the list of disks is the honest place to land.
+            if url.path == "/Volumes" { break }
+            if FileManager.default.fileExists(atPath: url.path) {
+                navigate(to: .directory(url), focusOn: missing, keepChanges: false)
+                return
+            }
+            let parent = url.deletingLastPathComponent()
+            candidate = parent.path == url.path ? nil : parent
+        }
+        navigate(to: .volumes, focusOn: missing, keepChanges: false)
+    }
+
+    /// True when this panel is showing the given volume, or anything inside
+    /// it. Asked when a disk is about to be ejected or has been renamed.
+    func isInside(_ volume: URL) -> Bool {
+        guard let url = location.url?.standardizedFileURL else { return false }
+        let root = volume.standardizedFileURL.path
+        return url.path == root || url.path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+    }
+
+    /// Follow a location onto a volume that has been renamed under us, so the
+    /// panel stays where it was rather than falling back to the disk list.
+    func rebase(from old: URL, to new: URL) {
+        guard let url = location.url?.standardizedFileURL, isInside(old) else { return }
+        let oldRoot = old.standardizedFileURL.path
+        let tail = String(url.path.dropFirst(oldRoot.count)).split(separator: "/").map(String.init)
+        let moved = tail.reduce(new.standardizedFileURL) { $0.appendingPathComponent($1) }
+        guard FileManager.default.fileExists(atPath: moved.path) else { return }
+        switch location {
+        case .volumes: return
+        case .directory: navigate(to: .directory(moved), focusOn: currentItem?.title)
+        case .image(_, let path): navigate(to: .image(moved, path: path), focusOn: currentItem?.title)
+        }
+    }
+
     /// Rebuild after an operation. An image with pending edits is redrawn from
     /// memory; anything else is re-read from disk.
     func refresh() {

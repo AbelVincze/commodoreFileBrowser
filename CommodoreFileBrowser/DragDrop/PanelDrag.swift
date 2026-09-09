@@ -164,46 +164,14 @@ final class DragCoordinator: NSObject, NSDraggingSource {
 
     func draggingSession(_ dragging: NSDraggingSession, endedAt screenPoint: NSPoint,
                          operation: NSDragOperation) {
-        let dragged = session?.items.compactMap(\.url) ?? []
         session = nil
         retireDrag()
         model?.left.dropHighlight = nil
         model?.right.dropHighlight = nil
-        watchForDeparture(of: dragged)
-    }
-
-    // MARK: - Following a move another application makes
-
-    /// Which follow-up is the current one, so a watch left over from an earlier
-    /// drag cannot redraw the panels under a later one.
-    private var followUp = 0
-
-    /// The receiver of a move does it after the drag has ended — the Finder a
-    /// moment later, on a queue of its own — so at the point we are told the
-    /// session finished the rows are still on the file system, and a redraw
-    /// then would draw them back. This watches the files that were dragged
-    /// instead and redraws the moment one of them has gone.
-    ///
-    /// Rows dragged out of an image have no path here: what left the app was a
-    /// copy in the temporary folder, and the image itself did not change.
-    func watchForDeparture(of urls: [URL]) {
-        guard !urls.isEmpty else { return }
-        followUp += 1
-        look(for: urls, token: followUp, tries: 20)
-    }
-
-    /// Twenty looks a seventh of a second apart: three seconds, which is longer
-    /// than the Finder takes to move a file and short enough to give up on a
-    /// drag that was a copy, or was let go over nothing.
-    private func look(for urls: [URL], token: Int, tries: Int) {
-        guard token == followUp, tries > 0 else { return }
-        if urls.contains(where: { !FileManager.default.fileExists(atPath: $0.path) }) {
-            model?.refreshBoth()
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.look(for: urls, token: token, tries: tries - 1)
-        }
+        // A move made by the receiver happens after the drag has ended — the
+        // Finder a moment later, on a queue of its own — so there is nothing
+        // to redraw yet. The panels watch the folders they are showing and
+        // follow the files out on their own.
     }
 }
 

@@ -3477,11 +3477,12 @@ do {
 
     // A move made by another application happens after the drag has already
     // ended, so the files are still there when the session reports finished.
-    // The panel follows the ones it let go of until one of them disappears.
+    // Nothing here waits for them: the panel is watching the folder it shows
+    // and follows the file out whenever it goes.
     let goodbye = try put("goodbye.txt", "bye", in: dirD)
     model.left.navigate(to: .directory(dirD))
     check(model.left.items.contains { $0.title == "goodbye.txt" }, "the panel lists a file it is about to lose")
-    coordinator.watchForDeparture(of: [goodbye])
+    model.startWatching()
     try fm.removeItem(at: goodbye)
     let until = Date().addingTimeInterval(2)
     while Date() < until, model.left.items.contains(where: { $0.title == "goodbye.txt" }) {
@@ -3541,6 +3542,120 @@ do {
     UserDefaults.standard.removePersistentDomain(forName: ProcessInfo.processInfo.processName)
 } catch {
     print("  FAIL drag and drop: \(error)"); failures += 1
+}
+
+// --- Changes made outside the app -------------------------------------------
+print("\n=== outside changes")
+do {
+    let fm = FileManager.default
+    let root = URL(fileURLWithPath: scratch).appendingPathComponent("outside")
+    try? fm.removeItem(at: root)
+    let folder = root.appendingPathComponent("watched")
+    let doomed = folder.appendingPathComponent("doomed")
+    try fm.createDirectory(at: doomed, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: root) }
+
+    let one = folder.appendingPathComponent("one.txt")
+    try Data("one".utf8).write(to: one)
+
+    let panel = PanelModel(side: .left)
+    // A URL that has come back from `deletingLastPathComponent` carries a
+    // trailing slash, so places are compared by path rather than by URL.
+    func at(_ url: URL) -> Bool {
+        panel.location.url?.standardizedFileURL.path == url.standardizedFileURL.path
+    }
+    panel.navigate(to: .directory(folder))
+    guard let oneIndex = panel.items.firstIndex(where: { $0.title == "one.txt" }) else {
+        throw DiskImageError.fileNotFound
+    }
+    panel.moveCursor(to: oneIndex)
+    panel.toggleMark()
+    panel.moveCursor(to: oneIndex)
+    let markedNames = Set(panel.items.filter { panel.marked.contains($0.id) }.map(\.title))
+    check(markedNames == ["one.txt"], "a file is marked before anything happens to the folder")
+
+    // A listing that has not changed is left exactly as it was.
+    let before = panel.items.map(\.title)
+    panel.externalRefresh()
+    check(panel.items.map(\.title) == before, "an unchanged folder redraws to the same rows")
+    check(panel.currentItem?.title == "one.txt", "and leaves the cursor alone")
+
+    // A file appearing above the cursor must not drag it down a row.
+    try Data("a".utf8).write(to: folder.appendingPathComponent("a-new.txt"))
+    panel.externalRefresh()
+    check(panel.items.contains { $0.title == "a-new.txt" }, "a file written from outside shows up")
+    check(panel.currentItem?.title == "one.txt", "the cursor stays on the row it was on")
+    check(Set(panel.items.filter { panel.marked.contains($0.id) }.map(\.title)) == ["one.txt"],
+          "and the marks stay on the files they were on")
+
+    // A file changing size is a change, even though the row keeps its name.
+    try Data("one much longer line".utf8).write(to: one)
+    panel.externalRefresh()
+    check(panel.items.first { $0.title == "one.txt" }?.byteSize == 20,
+          "a file rewritten from outside is redrawn at its new size")
+
+    // The folder under the panel is thrown away.
+    panel.navigate(to: .directory(doomed))
+    try fm.removeItem(at: doomed)
+    panel.externalRefresh()
+    check(at(folder), "a deleted folder drops the panel into its parent")
+    check(!panel.items.contains { $0.title == "doomed" }, "and the folder that went is not listed there")
+
+    // And so is everything above it.
+    let deep = folder.appendingPathComponent("gone/deeper")
+    try fm.createDirectory(at: deep, withIntermediateDirectories: true)
+    panel.navigate(to: .directory(deep))
+    try fm.removeItem(at: folder)
+    panel.externalRefresh()
+    check(at(root), "several folders deleted at once walks out past all of them")
+
+    // An image whose file is deleted while it is open.
+    try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    let imageURL = folder.appendingPathComponent("outside.d64")
+    try CBMDiskImage.createBlank(.d64, tracks: 35,
+                                 name: PETSCII.cbmName(fromASCII: "OUT"),
+                                 id: PETSCII.petscii(fromASCII: "01"), at: imageURL)
+    panel.navigate(to: .image(imageURL))
+    try panel.image!.write(name: PETSCII.cbmName(fromASCII: "pending"), type: .prg, data: Data([0x01, 0x08, 1]))
+    panel.refresh()
+    panel.externalRefresh()
+    check(panel.location == .image(imageURL), "an open image ignores the file system while it is being edited")
+    check(panel.items.contains { $0.title == "pending" }, "keeping the edits that are not on disk yet")
+    try fm.removeItem(at: imageURL)
+    panel.externalRefresh()
+    check(at(folder), "deleting the image file drops the panel into its folder")
+    check(!fm.fileExists(atPath: imageURL.path), "and the pending edits were not written back out to it")
+
+    // Which panel a disk going away concerns, and following one that is renamed.
+    panel.navigate(to: .directory(folder))
+    check(panel.isInside(root), "a panel knows it is inside the folder above it")
+    check(!panel.isInside(URL(fileURLWithPath: "/Volumes/Nothing")), "and that it is not inside another")
+    let renamed = root.appendingPathComponent("renamed")
+    try fm.moveItem(at: folder, to: renamed)
+    panel.rebase(from: folder, to: renamed)
+    check(at(renamed), "a volume renamed under the panel takes it with it")
+
+    // The watcher itself: a file written by something else, noticed unasked.
+    let watched = root.appendingPathComponent("live")
+    try fm.createDirectory(at: watched, withIntermediateDirectories: true)
+    let live = PanelModel(side: .right)
+    live.navigate(to: .directory(watched))
+    let watcher = FolderWatcher()
+    var fired = 0
+    watcher.watch(watched) { fired += 1; live.externalRefresh() }
+    try Data("hi".utf8).write(to: watched.appendingPathComponent("appeared.txt"))
+    let until = Date().addingTimeInterval(5)
+    while Date() < until, !live.items.contains(where: { $0.title == "appeared.txt" }) {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    check(fired > 0, "the watcher reports a folder written to from outside")
+    check(live.items.contains { $0.title == "appeared.txt" },
+          "and the panel lists the new file without being asked")
+    watcher.stop()
+
+    UserDefaults.standard.removePersistentDomain(forName: ProcessInfo.processInfo.processName)
+} catch {
+    print("  FAIL outside changes: \(error)"); failures += 1
 }
 
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) CHECK(S) FAILED")

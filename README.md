@@ -46,6 +46,10 @@ derived data, from Xcode and from the command line alike.
   viewer that draws a file one pixel per bit — presets for a C64 hires screen,
   a character set, sprites and plain raster order, with the block size
   adjustable for anything else.
+* Pictures drawn in their own colours: Amiga ILBMs, including EHB, HAM and an
+  animation's first frame, and the C64 painters — Koala, Art Studio, Doodle,
+  Amica Paint, FLI and the rest — recognised from their size and load address,
+  since none of those files says what it is.
 * Directories rendered from a real character ROM, so PETSCII box-drawing comes
   out the way a 1541 prints it.
 

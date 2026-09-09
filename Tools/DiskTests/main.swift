@@ -2239,18 +2239,31 @@ do {
     // Paint Magic saves the picture inside the program that shows it, which is
     // why the bitmap starts 114 bytes in rather than at the front: the display
     // code is what lands between the load address and the $2000 boundary the
-    // VIC needs the bitmap on.
+    // VIC needs the bitmap on. Its offsets are that code's own — it reads the
+    // background from $5F40 and fills the whole of colour RAM from $5F43, so
+    // one byte stands in for the page every other multicolour format saves.
     var magic = [UInt8](repeating: 0, count: 9332)
     magic[0] = 0x8E; magic[1] = 0x3F                 // load $3F8E
-    magic[2 + 114 + cell(0)] = 0b1010_0000
-    magic[2 + 8306] = 0x71                           // 7 yellow over 1 white
+    magic[2 + 114 + cell(0)] = 0b00_01_10_11
+    magic[2 + 114 + (7 * 40 + 11) * 8] = 0b11_00_00_00
+    magic[2 + 8306] = 0x71                           // $6000 screen: 7 over 1
+    magic[2 + 8114] = 0x06                           // $5F40 background: blue
+    magic[2 + 8117] = 0x0D                           // $5F43 colour RAM: light green
     do {
         let picture = try PictureLoader.decode(name: "01 ABEL", bytes: magic)
         check(picture.format == "Paint Magic", "9332 bytes at $3F8E is \(picture.format)")
-        check(pixel(picture.image, 0, 0).map { $0 == colour(7) } == true,
+        check(pixel(picture.image, 0, 0).map { $0 == colour(6) } == true,
+              "the background comes from $5F40")
+        check(pixel(picture.image, 2, 0).map { $0 == colour(7) } == true,
               "the bitmap starts past the display code")
-        check(pixel(picture.image, 1, 0).map { $0 == colour(1) } == true,
+        check(pixel(picture.image, 4, 0).map { $0 == colour(1) } == true,
               "and the video matrix past the gap at the end of it")
+        check(pixel(picture.image, 6, 0).map { $0 == colour(13) } == true,
+              "the fourth colour is the one byte at $5F43")
+        // The same byte serves every cell, which is the whole point of it:
+        // a cell that carries no colour of its own still gets that one.
+        check(pixel(picture.image, 11 * 8, 7 * 8).map { $0 == colour(13) } == true,
+              "and every other cell reads that same byte")
     } catch { check(false, "Paint Magic: \(error)") }
 
     // The same bytes at Interpaint's address are Interpaint, not Koala.

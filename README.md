@@ -381,7 +381,7 @@ outright when neither matches, rather than guessed at.
 | Face Painter | `$4000` | 10004 | multicolour |
 | Run Paint | `$6000` | 10006 | multicolour |
 | Interpaint | `$4000` | 10003 / 9002 | multicolour or hires |
-| Paint Magic | `$3F8E` | 9332 | hires |
+| Paint Magic | `$3F8E` | 9332 | multicolour |
 | Amica Paint | `$4000` | packed | multicolour |
 | Blackmail FLI | `$3B00` | 17474 | multicolour, eight video matrices |
 | Raw bitmap | none | 10001 / 9000 | a screen dumped with no load address |
@@ -397,9 +397,13 @@ Paint Magic is the odd shape in the table because it saves the picture inside
 the program that shows it: 114 bytes of display code first, which is exactly
 what puts the bitmap on the `$2000` boundary the VIC needs it on and the video
 matrix at `$6000`, with that page's tail — sprite pointers and all — still on
-the end of the file. There is no published description of it, so this one was
-worked out from a disk of them: the sizes account for every byte, and every
-picture on the disk comes out as what it is.
+the end of the file. There is no published description of it, so the offsets
+here are the ones that code uses: it reads `$D021` from `$5F40`, the border
+from `$5F44`, and fills *the whole of colour RAM* from the single byte at
+`$5F43`. That last is why the file carries no page of colour RAM and why its
+cells get three colours of their own over one the screen shares — and why
+reading the file for a saved colour page, and concluding from its absence that
+the format must be hires, gets it wrong.
 
 **Hires** gives each 8x8 cell two colours out of the video matrix; **multicolour**
 trades half the horizontal resolution for four, the fourth coming from colour

@@ -55,6 +55,20 @@ struct C64PictureFormat {
         case fli
     }
 
+    /// Colour RAM, which is the one piece of a C64 picture the formats really
+    /// disagree about.
+    enum Colour {
+        /// Hires, which takes both its colours from the video matrix and never
+        /// reads colour RAM at all.
+        case fromScreen
+        /// A byte of colour RAM per character cell, at this offset.
+        case perCell(Int)
+        /// One byte the whole screen shares. Paint Magic's display code fills
+        /// the whole of colour RAM with a single value rather than restoring a
+        /// saved page of it, so a single value is all there is in the file.
+        case uniform(Int)
+    }
+
     let name: String
     /// Only ever a hint. A picture pulled off a D64 is as likely to be called
     /// `PIC A` as `sunset.koa`, so nothing here is decided by the extension.
@@ -68,8 +82,8 @@ struct C64PictureFormat {
     /// Offsets into the file past the load address.
     let bitmap: Int
     let screen: Int
-    /// nil for hires, which takes both its colours from the video matrix.
-    let colour: Int?
+    /// Where a multicolour picture's fourth colour comes from.
+    let colour: Colour
     /// nil where the format does not store one, which means black.
     let background: Int?
     /// True for a format whose bytes are packed and have to be expanded before
@@ -94,57 +108,61 @@ enum C64Picture {
         // circulation is still kept in.
         C64PictureFormat(name: "Koala Painter", extensions: ["koa", "kla", "gg"],
                          load: 0x6000, size: 10003, kind: .multicolour,
-                         bitmap: 0, screen: 8000, colour: 9000, background: 10000),
+                         bitmap: 0, screen: 8000, colour: .perCell(9000), background: 10000),
         // Koala's layout at Interpaint's address.
         C64PictureFormat(name: "Interpaint", extensions: ["ipt", "ip64"],
                          load: 0x4000, size: 10003, kind: .multicolour,
-                         bitmap: 0, screen: 8000, colour: 9000, background: 10000),
+                         bitmap: 0, screen: 8000, colour: .perCell(9000), background: 10000),
         C64PictureFormat(name: "Face Painter", extensions: ["fcp"],
                          load: 0x4000, size: 10004, kind: .multicolour,
-                         bitmap: 0, screen: 8000, colour: 9000, background: 10000),
+                         bitmap: 0, screen: 8000, colour: .perCell(9000), background: 10000),
         C64PictureFormat(name: "Run Paint", extensions: ["rpm", "rp"],
                          load: 0x6000, size: 10006, kind: .multicolour,
-                         bitmap: 0, screen: 8000, colour: 9000, background: 10000),
+                         bitmap: 0, screen: 8000, colour: .perCell(9000), background: 10000),
         // The odd one out: a single colour byte and fifteen unused ones sit
         // between the video matrix and colour RAM.
         C64PictureFormat(name: "Advanced Art Studio", extensions: ["ocp", "art"],
                          load: 0x2000, size: 10018, kind: .multicolour,
-                         bitmap: 0, screen: 8000, colour: 9016, background: 9000),
+                         bitmap: 0, screen: 8000, colour: .perCell(9016), background: 9000),
         C64PictureFormat(name: "Art Studio", extensions: ["aas", "hpi"],
                          load: 0x2000, size: 9009, kind: .hires,
-                         bitmap: 0, screen: 8000, colour: nil, background: nil),
+                         bitmap: 0, screen: 8000, colour: .fromScreen, background: nil),
         C64PictureFormat(name: "Hi-Eddi", extensions: ["hed"],
                          load: 0xA000, size: 9002, kind: .hires,
-                         bitmap: 0, screen: 8000, colour: nil, background: nil),
+                         bitmap: 0, screen: 8000, colour: .fromScreen, background: nil),
         C64PictureFormat(name: "Interpaint", extensions: ["ip", "iph"],
                          load: 0x4000, size: 9002, kind: .hires,
-                         bitmap: 0, screen: 8000, colour: nil, background: nil),
+                         bitmap: 0, screen: 8000, colour: .fromScreen, background: nil),
         // Paint Magic saves the picture inside the program that shows it: a
         // hundred and fourteen bytes of display code first, which is what puts
         // the bitmap on a $2000 boundary at $4000 and the video matrix at
         // $6000, with the tail end of the VIC's page — sprite pointers and all
-        // — still on the end of the file. Worked out from a disk of them
-        // rather than from a specification, there being none to find.
+        // — still on the end of the file. There being no description of the
+        // format to find, the offsets are the ones its own display code uses:
+        // it reads $D021 from $5F40 and fills the whole of colour RAM from
+        // $5F43, which is why one byte stands in for the page every other
+        // multicolour format saves.
         C64PictureFormat(name: "Paint Magic", extensions: ["pmg"],
-                         load: 0x3F8E, size: 9332, kind: .hires,
-                         bitmap: 114, screen: 8306, colour: nil, background: nil),
+                         load: 0x3F8E, size: 9332, kind: .multicolour,
+                         bitmap: 114, screen: 8306,
+                         colour: .uniform(8117), background: 8114),
         // Screen first, and both pieces padded up to whole pages.
         C64PictureFormat(name: "Doodle", extensions: ["dd", "ddl", "jj"],
                          load: 0x5C00, size: 9218, kind: .hires,
-                         bitmap: 1024, screen: 0, colour: nil, background: nil),
+                         bitmap: 1024, screen: 0, colour: .fromScreen, background: nil),
         // Eight video matrices, one for each raster line of a character row.
         C64PictureFormat(name: "Blackmail FLI", extensions: ["bml", "fli"],
                          load: 0x3B00, size: 17474, kind: .fli,
-                         bitmap: 0x2500, screen: 0x500, colour: 0x100, background: nil),
+                         bitmap: 0x2500, screen: 0x500, colour: .perCell(0x100), background: nil),
         // Saved straight out of memory with no load address in front. Rarer
         // than the named formats, but it is what a memory dump of a picture
         // looks like and there is nothing else it could be at these sizes.
         C64PictureFormat(name: "Raw bitmap", extensions: [],
                          load: nil, size: 9000, kind: .hires,
-                         bitmap: 0, screen: 8000, colour: nil, background: nil),
+                         bitmap: 0, screen: 8000, colour: .fromScreen, background: nil),
         C64PictureFormat(name: "Raw bitmap", extensions: [],
                          load: nil, size: 10001, kind: .multicolour,
-                         bitmap: 0, screen: 8000, colour: 9000, background: 10000),
+                         bitmap: 0, screen: 8000, colour: .perCell(9000), background: 10000),
     ]
 
     /// Amica Paint, which is Koala's layout run through a byte packer. Its
@@ -156,7 +174,7 @@ enum C64Picture {
 
     static let amica = C64PictureFormat(name: "Amica Paint", extensions: ["ami"],
                                         load: amicaLoad, size: 0, kind: .multicolour,
-                                        bitmap: 0, screen: 8000, colour: 9000,
+                                        bitmap: 0, screen: 8000, colour: .perCell(9000),
                                         background: 10000, packed: true)
 
     enum Failure: LocalizedError {
@@ -236,6 +254,10 @@ enum C64Picture {
             return data[offset]
         }
         let background = Int(format.background.map { at($0) } ?? 0) & 15
+        // Read once rather than per pixel: it is the same byte every time.
+        let shared: Int
+        if case .uniform(let offset) = format.colour { shared = Int(at(offset)) & 15 }
+        else { shared = 0 }
 
         for y in 0..<height {
             let row = y >> 3, line = y & 7
@@ -259,7 +281,12 @@ enum C64Picture {
                     case 0: index = background
                     case 1: index = screen >> 4
                     case 2: index = screen & 15
-                    default: index = Int(at((format.colour ?? 0) + cell)) & 15
+                    default:
+                        switch format.colour {
+                        case .perCell(let offset): index = Int(at(offset + cell)) & 15
+                        case .uniform: index = shared
+                        case .fromScreen: index = 0
+                        }
                     }
                 }
                 let c = VICII.colours[index & 15]
@@ -281,9 +308,19 @@ enum C64Picture {
     private static func modeText(_ format: C64PictureFormat) -> String {
         var parts: [String] = []
         switch format.kind {
-        case .hires: parts.append("hires · 2 colours a cell")
-        case .multicolour: parts.append("multicolour · 4 colours a cell")
-        case .fli: parts.append("FLI · 8 video matrices")
+        case .hires:
+            parts.append("hires · 2 colours a cell")
+        case .multicolour:
+            // A shared colour RAM leaves three of the four free per cell, and
+            // saying so is the difference between a picture that looks flatter
+            // than expected and one that is being read wrongly.
+            if case .uniform = format.colour {
+                parts.append("multicolour · 3 colours a cell over one shared")
+            } else {
+                parts.append("multicolour · 4 colours a cell")
+            }
+        case .fli:
+            parts.append("FLI · 8 video matrices")
         }
         if let load = format.load { parts.append(String(format: "load $%04X", load)) }
         if format.packed { parts.append("packed") }

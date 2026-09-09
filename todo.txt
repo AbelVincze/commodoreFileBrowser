@@ -1,19 +1,18 @@
 TODO:
-keyboard nav in VIEW (Copy hex data as text)
-
-
-- set color for oscilloscope video export
-- set bg color of oscilloscope in modal
-
+- keyboard nav in VIEW (Copy hex data as text)
+* set color for oscilloscope video export
+* set bg color of oscilloscope in modal
 
 - text view (c64 screen/petscii, amiga, normal)
 - hex view (c64 screen/petscii, amiga, normal)
 - bitmap view (parameter block, image?)
 
+- mass file rename
+- dir ordering (c64 images) + del file
+- file name entering, petscii input
 
+- quick look disk image (dir vith c64 font)
+- print dir
 
-
-mass file rename
-dir ordering (c64 images) + del file
-file size display
-file name entering, petscii input
+fix
+- sid player if no more file and the last one is not recognized, after close, error message appears.

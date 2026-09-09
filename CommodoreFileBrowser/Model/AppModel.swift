@@ -153,6 +153,27 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshMenuState() }
             .store(in: &panelWatch)
+
+        // A status line reports what just happened, here, in the panel it is
+        // drawn under. Switching sides or walking somewhere else leaves it
+        // describing a place that is no longer on screen, so it goes as soon
+        // as either changes.
+        //
+        // Delivered as it happens rather than on the next run loop pass: a
+        // `@Published` fires before the value lands, so the handful of actions
+        // that navigate and then say what they did — leaving an image, and
+        // discarding — still get to keep their message.
+        for panel in [left, right] {
+            panel.$location
+                .dropFirst()
+                .sink { [weak self] _ in self?.statusMessage = "" }
+                .store(in: &panelWatch)
+        }
+        $activeSide
+            .dropFirst()
+            .sink { [weak self] _ in self?.statusMessage = "" }
+            .store(in: &panelWatch)
+
         refreshMenuState()
     }
 
@@ -239,8 +260,14 @@ final class AppModel: ObservableObject {
         if case .sample = sheet { return handleSampleKey(event) }
         guard sheet == nil else { return false }
         let shift = event.modifierFlags.contains(.shift)
-        let command = event.modifierFlags.contains(.command)
-        if command, event.charactersIgnoringModifiers?.lowercased() != "r" { return false }
+        // ⌘R renames, and it is the one Command chord the browser answers
+        // itself. The test is on the whole set of modifiers rather than on
+        // Command alone: ⌥⌘R reveals in Finder and ⇧⌘R repairs the disk, and a
+        // looser test swallows both here so the menu never sees the key.
+        let command = event.modifierFlags
+            .intersection([.command, .option, .control, .shift]) == .command
+        if event.modifierFlags.contains(.command),
+           !(command && event.charactersIgnoringModifiers?.lowercased() == "r") { return false }
 
         switch Int(event.keyCode) {
         case 126: activePanel.moveCursor(by: shift ? -10 : -1)          // up
@@ -837,24 +864,63 @@ final class AppModel: ObservableObject {
         sheet = .rename(item)
     }
 
-    func performRename(_ item: PanelItem, to newName: String) {
+    func performRename(_ item: PanelItem, edit: DirectoryEntryEdit) {
         let panel = activePanel
         do {
-            switch item.kind {
-            case .imageFile, .imageFolder:
-                guard let image = panel.image, let entry = item.cbm else { throw DiskImageError.fileNotFound }
-                try image.rename(entry, at: panel.location.imagePath,
-                                 to: entry.encoding == .petscii ? PETSCII.cbmName(fromASCII: newName)
-                                                                : entry.encoding.bytes(newName))
-            default:
-                guard let url = item.url else { throw DiskImageError.fileNotFound }
-                let dst = url.deletingLastPathComponent().appendingPathComponent(newName)
-                try FileManager.default.moveItem(at: url, to: dst)
+            switch edit {
+            // The advanced half writes the printed fields as they are, and
+            // only a Commodore directory has fields to write.
+            case .raw(let name, let blocks):
+                guard let image = cbmImage, let entry = item.cbm else { throw DiskImageError.fileNotFound }
+                try image.setEntryFields(entry, name: name, blocks: blocks)
+            case .name(let newName):
+                switch item.kind {
+                case .imageFile, .imageFolder:
+                    guard let image = panel.image, let entry = item.cbm else { throw DiskImageError.fileNotFound }
+                    try image.rename(entry, at: panel.location.imagePath,
+                                     to: entry.encoding == .petscii ? PETSCII.cbmName(fromASCII: newName)
+                                                                    : entry.encoding.bytes(newName))
+                default:
+                    guard let url = item.url else { throw DiskImageError.fileNotFound }
+                    let dst = url.deletingLastPathComponent().appendingPathComponent(newName)
+                    try FileManager.default.moveItem(at: url, to: dst)
+                }
             }
             finishOperation(verb: "Renamed", count: 1, skipped: 0, error: nil)
         } catch {
             fail(error)
         }
+    }
+
+    // MARK: - Advanced directory editing
+
+    /// The image in the active panel when it is a Commodore one. The byte
+    /// level editors take a CBM directory apart field by field, and no other
+    /// format here has those fields.
+    var cbmImage: CBMDiskImage? { activePanel.image as? CBMDiskImage }
+
+    /// What the Advanced half of the header dialog opens on, or nil when there
+    /// is nothing of the sort to edit and the dialog stays as it was.
+    var headerDraft: DiskHeaderDraft? {
+        guard let image = cbmImage, image.canWrite,
+              image.headerFieldBytes.count == CBMDiskImage.headerFieldLength else { return nil }
+        return DiskHeaderDraft(header: image.headerFieldBytes,
+                               blocksFree: image.blocksFree,
+                               maximumBlocksFree: image.maximumBlocksFree)
+    }
+
+    /// The same for a row being renamed.
+    func entryDraft(for item: PanelItem) -> DirectoryEntryDraft? {
+        guard let image = cbmImage, image.canWrite, item.kind.isInsideImage,
+              let entry = item.cbm else { return nil }
+        return DirectoryEntryDraft(name: image.rawName(of: entry), blocks: entry.blocks)
+    }
+
+    /// And for a DEL entry that does not exist yet, which starts from the
+    /// dashes the plain dialog offers.
+    func newEntryDraft(named text: String) -> DirectoryEntryDraft? {
+        guard let image = cbmImage, image.canWrite else { return nil }
+        return DirectoryEntryDraft(name: PETSCII.padded16(PETSCII.cbmName(fromASCII: text)), blocks: 0)
     }
 
     // MARK: - New folder / image / header
@@ -936,6 +1002,24 @@ final class AppModel: ObservableObject {
         sheet = .repairDisk
     }
 
+    /// Scratch the files a repair cannot see past, then look again.
+    ///
+    /// The sheet stays up on the new plan rather than repairing straight
+    /// through. Deleting is only half the job, and the repair it unblocks is
+    /// the half worth reading before it is written.
+    func deleteRepairBlockers() {
+        guard let image = repairableImage else { return }
+        do {
+            let scratched = try image.deleteBlockingFiles()
+            activePanel.refreshImage()
+            repairPlan = image.analyseForRepair()
+            statusMessage = scratched.isEmpty
+                ? "Nothing to delete"
+                : "Deleted \(scratched.count) damaged file\(scratched.count == 1 ? "" : "s"): "
+                    + scratched.joined(separator: ", ")
+        } catch { fail(error) }
+    }
+
     func performRepair() {
         guard let image = repairableImage else { return }
         do {
@@ -953,11 +1037,18 @@ final class AppModel: ObservableObject {
         } catch { fail(error) }
     }
 
-    func performEditHeader(name: String, id: String) {
+    func performEditHeader(_ edit: DiskHeaderEdit) {
         guard let image = activePanel.image else { return }
         do {
-            try image.setDiskHeader(name: image.nameBytes(for: name),
-                                    id: PETSCII.petscii(fromASCII: id))
+            switch edit {
+            case .simple(let name, let id):
+                try image.setDiskHeader(name: image.nameBytes(for: name),
+                                        id: PETSCII.petscii(fromASCII: id))
+            case .raw(let header, let free):
+                guard let cbm = image as? CBMDiskImage else { return }
+                try cbm.setHeaderFieldBytes(header)
+                if let free { try cbm.setBlocksFree(free) }
+            }
             activePanel.refreshImage()
             statusMessage = "Disk header updated"
         } catch { fail(error) }
@@ -976,11 +1067,18 @@ final class AppModel: ObservableObject {
         } catch { fail(error) }
     }
 
-    func addDecorativeEntry(named name: String) {
+    func addDecorativeEntry(_ edit: DirectoryEntryEdit) {
         guard let image = activePanel.image else { return }
         do {
-            try image.addDecorativeEntry(name: PETSCII.cbmName(fromASCII: name),
-                                         after: activePanel.currentItem?.cbm)
+            switch edit {
+            case .name(let name):
+                try image.addDecorativeEntry(name: PETSCII.cbmName(fromASCII: name),
+                                             after: activePanel.currentItem?.cbm)
+            case .raw(let name, let blocks):
+                guard let cbm = cbmImage else { return }
+                try cbm.addDecorativeEntry(name: name, blocks: blocks,
+                                           after: activePanel.currentItem?.cbm)
+            }
             activePanel.refreshImage()
             statusMessage = "Added DEL entry"
         } catch { fail(error) }

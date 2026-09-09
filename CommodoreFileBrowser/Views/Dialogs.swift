@@ -8,6 +8,12 @@ private struct DialogFrame<Content: View>: View {
     let confirmTitle: String
     var confirmDisabled: Bool = false
     var destructive: Bool = false
+    /// A third, destructive button, set apart on the left the way the system
+    /// places an alternative to the two the dialog is really asking about.
+    var alternative: (title: String, action: () -> Void)?
+    /// Dialogs are one width apart from the ones that expand to show a
+    /// directory field byte by byte, which needs the room.
+    var width: CGFloat = 420
     let onCancel: () -> Void
     let onConfirm: () -> Void
     @ViewBuilder var content: () -> Content
@@ -17,6 +23,9 @@ private struct DialogFrame<Content: View>: View {
             Text(title).font(.system(size: 14, weight: .semibold))
             content()
             HStack {
+                if let alternative {
+                    Button(alternative.title, role: .destructive, action: alternative.action)
+                }
                 Spacer()
                 Button("Cancel", role: .cancel, action: onCancel)
                     .keyboardShortcut(.cancelAction)
@@ -26,7 +35,7 @@ private struct DialogFrame<Content: View>: View {
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .frame(width: width)
         .background(palette.color(.window))
     }
 }
@@ -264,6 +273,35 @@ struct NewImageSheet: View {
     }
 }
 
+// MARK: - Advanced directory editing
+
+/// What the advanced half of the header dialog starts from: the printed field
+/// as the disk holds it, and the figure the listing ends on.
+struct DiskHeaderDraft {
+    var header: [UInt8]
+    var blocksFree: Int
+    var maximumBlocksFree: Int
+}
+
+/// What the header dialog comes back with — a name and an ID typed the
+/// ordinary way, or the bytes of the line itself.
+enum DiskHeaderEdit {
+    case simple(name: String, id: String)
+    case raw(header: [UInt8], blocksFree: Int?)
+}
+
+/// The same for one directory row: its 16 byte name field and the block count
+/// printed in front of it.
+struct DirectoryEntryDraft {
+    var name: [UInt8]
+    var blocks: Int
+}
+
+enum DirectoryEntryEdit {
+    case name(String)
+    case raw(name: [UInt8], blocks: Int)
+}
+
 // MARK: - Disk header
 
 struct DiskHeaderSheet: View {
@@ -272,36 +310,253 @@ struct DiskHeaderSheet: View {
     @State var id: String
     /// An Amiga volume has a name and nowhere to put an ID.
     var wantsID: Bool = true
+    /// The bytes behind the line, on a writable Commodore image. Nil where
+    /// there is no such field to take apart, and the Advanced half stays away.
+    var advanced: DiskHeaderDraft?
+    @Binding var font: PETSCIIFont
     let onCancel: () -> Void
-    let onConfirm: (String, String) -> Void
+    let onConfirm: (DiskHeaderEdit) -> Void
     @FocusState private var focused: Bool
+
+    @State private var expanded = false
+    @State private var header: [UInt8] = []
+    @State private var caret = 0
+    @State private var setsBlocksFree = false
+    @State private var blocksFree = 0
+    /// What the two text fields held when the sheet opened, so that expanding
+    /// carries over what was typed without overwriting bytes nobody touched.
+    @State private var initialName = ""
+    @State private var initialID = ""
 
     var body: some View {
         DialogFrame(title: "Disk header",
                     palette: palette,
                     confirmTitle: "Apply",
+                    width: expanded ? 580 : 420,
                     onCancel: onCancel,
-                    onConfirm: { onConfirm(name, id) }) {
+                    onConfirm: confirm) {
             VStack(alignment: .leading, spacing: 10) {
-                LabeledContent("Disk name") {
-                    TextField("", text: $name)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($focused)
-                        .onSubmit { onConfirm(name, id) }
+                if !expanded {
+                    LabeledContent("Disk name") {
+                        TextField("", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($focused)
+                            .onSubmit(confirm)
+                    }
+                    if wantsID {
+                        LabeledContent("Disk ID") {
+                            TextField("", text: $id).textFieldStyle(.roundedBorder).frame(width: 60)
+                        }
+                    }
+                    Text(wantsID
+                         ? "The name appears in the reverse-video line at the top of a directory listing."
+                         : "The name appears at the top of the panel, the way a volume is named.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(palette.color(.dim))
                 }
-                if wantsID {
-                    LabeledContent("Disk ID") {
-                        TextField("", text: $id).textFieldStyle(.roundedBorder).frame(width: 60)
+                if advanced != nil {
+                    DisclosureGroup("Advanced", isExpanded: expansion) {
+                        advancedContent
+                            .padding(.top, 8)
                     }
                 }
-                Text(wantsID
-                     ? "The name appears in the reverse-video line at the top of a directory listing."
-                     : "The name appears at the top of the panel, the way a volume is named.")
+            }
+        }
+        .onAppear {
+            initialName = name
+            initialID = id
+            focused = true
+        }
+    }
+
+    @ViewBuilder
+    private var advancedContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PETSCIIFieldEditor(bytes: $header, caret: $caret, font: $font,
+                               groups: [.init(label: "Disk name", range: 0..<16),
+                                        .init(label: "Pad", range: 16..<18),
+                                        .init(label: "ID", range: 18..<20),
+                                        .init(label: "Pad", range: 20..<21),
+                                        .init(label: "DOS", range: 21..<23)],
+                               palette: palette)
+            Text("The whole reverse-video line, byte for byte. The first pad byte is where the drive puts the closing quote, so it never prints; everything after it does.")
+                .font(.system(size: 10))
+                .foregroundStyle(palette.color(.dim))
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            HStack(spacing: 8) {
+                Toggle("Blocks free", isOn: $setsBlocksFree)
+                    .toggleStyle(.checkbox)
+                TextField("", value: $blocksFree, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 70)
+                    .disabled(!setsBlocksFree)
+                Text("0–\(advanced?.maximumBlocksFree ?? 0)")
                     .font(.system(size: 10))
                     .foregroundStyle(palette.color(.dim))
             }
+            Text("Only the free counters move; the block map is left as it is. Repair Disk counts the map, so it would put the figure back.")
+                .font(.system(size: 10))
+                .foregroundStyle(palette.color(.dim))
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .onAppear { focused = true }
+    }
+
+    private var expansion: Binding<Bool> {
+        Binding(get: { expanded }, set: { open in
+            if open { expand() } else { collapse() }
+            expanded = open
+        })
+    }
+
+    /// Take the bytes off the disk, and lay over them anything typed into the
+    /// two fields before Advanced was opened.
+    private func expand() {
+        guard let advanced else { return }
+        var raw = PETSCIIFieldEditor.padded(advanced.header, to: CBMDiskImage.headerFieldLength)
+        if name != initialName {
+            let typed = PETSCII.padded16(PETSCII.cbmName(fromASCII: name))
+            for i in 0..<16 { raw[i] = typed[i] }
+        }
+        if id != initialID {
+            let typed = PETSCII.petscii(fromASCII: id)
+            raw[18] = typed.count > 0 ? typed[0] : 0x20
+            raw[19] = typed.count > 1 ? typed[1] : 0x20
+        }
+        header = raw
+        caret = 0
+        blocksFree = advanced.blocksFree
+    }
+
+    /// And back: the fields catch up with the bytes, so closing Advanced does
+    /// not quietly throw the editing away.
+    private func collapse() {
+        guard header.count == CBMDiskImage.headerFieldLength else { return }
+        name = PETSCII.ascii(PETSCII.trimPadding(Array(header[0..<16])))
+        id = PETSCII.ascii(Array(header[18..<20]))
+        initialName = name
+        initialID = id
+    }
+
+    private func confirm() {
+        if expanded {
+            onConfirm(.raw(header: header, blocksFree: setsBlocksFree ? blocksFree : nil))
+        } else {
+            onConfirm(.simple(name: name, id: id))
+        }
+    }
+}
+
+// MARK: - One directory row
+
+/// Rename, and Add DEL entry: the same dialog, since a decorated directory is
+/// written the same way whether the row started as a file or as a spacer.
+struct DirectoryEntrySheet: View {
+    let title: String
+    let label: String
+    let confirmTitle: String
+    let palette: Palette
+    @State var text: String
+    /// The row as the directory holds it, on a writable Commodore image.
+    var advanced: DirectoryEntryDraft?
+    @Binding var font: PETSCIIFont
+    let onCancel: () -> Void
+    let onConfirm: (DirectoryEntryEdit) -> Void
+    @FocusState private var focused: Bool
+
+    @State private var expanded = false
+    @State private var name: [UInt8] = []
+    @State private var caret = 0
+    @State private var blocks = 0
+    @State private var initialText = ""
+
+    private var isEmpty: Bool { text.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    var body: some View {
+        DialogFrame(title: title,
+                    palette: palette,
+                    confirmTitle: confirmTitle,
+                    confirmDisabled: !expanded && isEmpty,
+                    width: expanded ? 580 : 420,
+                    onCancel: onCancel,
+                    onConfirm: confirm) {
+            VStack(alignment: .leading, spacing: 10) {
+                if !expanded {
+                    LabeledContent(label) {
+                        TextField("", text: $text)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($focused)
+                            .onSubmit { if !isEmpty { confirm() } }
+                    }
+                }
+                if advanced != nil {
+                    DisclosureGroup("Advanced", isExpanded: expansion) {
+                        advancedContent
+                            .padding(.top, 8)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            initialText = text
+            focused = true
+        }
+    }
+
+    @ViewBuilder
+    private var advancedContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PETSCIIFieldEditor(bytes: $name, caret: $caret, font: $font,
+                               groups: [.init(label: "Name field", range: 0..<16)],
+                               palette: palette)
+            Text("All sixteen bytes of the name. The drive closes the quote on the first shifted space and prints the rest of the field after it, which is where a decorated row keeps its graphics.")
+                .font(.system(size: 10))
+                .foregroundStyle(palette.color(.dim))
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            HStack(spacing: 8) {
+                LabeledContent("Blocks") {
+                    TextField("", value: $blocks, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 70)
+                }
+                .fixedSize()
+                Spacer()
+            }
+            Text("The number the listing prints. Nothing checks it against the file, which is what lets a directory count in pictures.")
+                .font(.system(size: 10))
+                .foregroundStyle(palette.color(.dim))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var expansion: Binding<Bool> {
+        Binding(get: { expanded }, set: { open in
+            if open { expand() } else { collapse() }
+            expanded = open
+        })
+    }
+
+    private func expand() {
+        guard let advanced else { return }
+        name = text == initialText
+            ? PETSCIIFieldEditor.padded(advanced.name, to: 16)
+            : PETSCII.padded16(PETSCII.cbmName(fromASCII: text))
+        caret = 0
+        blocks = advanced.blocks
+    }
+
+    private func collapse() {
+        text = PETSCII.ascii(PETSCII.trimPadding(name))
+        initialText = text
+    }
+
+    private func confirm() {
+        if expanded {
+            onConfirm(.raw(name: name, blocks: blocks))
+        } else {
+            onConfirm(.name(text))
+        }
     }
 }
 
@@ -316,12 +571,28 @@ struct RepairSheet: View {
     let palette: Palette
     let onCancel: () -> Void
     let onConfirm: () -> Void
+    /// Scratch the damaged files and survey again. The sheet stays up on the
+    /// new plan, so the repair this clears the way for is still read before
+    /// it is agreed to.
+    let onDeleteBlockers: () -> Void
+
+    private var blockers: [String] { plan.blockingFiles }
+
+    /// Offered only when there is damage to clear. A disk that can already be
+    /// repaired has nothing to delete, and the button would be an invitation
+    /// to lose a file for no reason.
+    private var deleteButton: (title: String, action: () -> Void)? {
+        guard !blockers.isEmpty else { return nil }
+        let noun = blockers.count == 1 ? "File" : "Files"
+        return (title: "Delete \(blockers.count) Damaged \(noun)", action: onDeleteBlockers)
+    }
 
     var body: some View {
         DialogFrame(title: "Repair \(diskName)",
                     palette: palette,
                     confirmTitle: "Repair",
                     confirmDisabled: !plan.canRepair || plan.isClean,
+                    alternative: deleteButton,
                     onCancel: onCancel,
                     onConfirm: onConfirm) {
             VStack(alignment: .leading, spacing: 12) {
@@ -335,6 +606,9 @@ struct RepairSheet: View {
                     if plan.canRepair {
                         section("Will change")
                         changes
+                    } else if !blockers.isEmpty {
+                        section("Deleting would")
+                        blockingFiles
                     }
                 }
             }
@@ -351,9 +625,15 @@ struct RepairSheet: View {
 
             // The two that stop a repair come first, since they are the reason
             // the button is disabled and everything below them is moot.
+            // Two claimants named, however many there are. A disk with ten
+            // entries pointing at one sector is real — hand made directory art
+            // does it — and spelling out all ten on every line buries the rest
+            // of the report. The full list is under "Deleting would" below.
             ForEach(Array(plan.collisions.prefix(4).enumerated()), id: \.offset) { _, clash in
                 line("Track \(clash.track) sector \(clash.sector) is claimed by "
-                     + clash.claimedBy.joined(separator: " and ") + ".", bad: true)
+                     + clash.claimedBy.prefix(2).map { "\"\($0)\"" }.joined(separator: " and ")
+                     + (clash.claimedBy.count > 2
+                        ? " and \(clash.claimedBy.count - 2) others" : "") + ".", bad: true)
             }
             if plan.collisions.count > 4 {
                 line("\(plan.collisions.count - 4) more shared sectors.", bad: true)
@@ -387,10 +667,27 @@ struct RepairSheet: View {
                      + "claims \(plan.blocksFreeBefore) blocks free.")
             }
             if !plan.canRepair {
-                line("Nothing will be written. A shared sector or a broken chain is damage "
-                     + "the BAM cannot describe, and guessing at it would lose a file rather "
-                     + "than save one.", dim: true)
+                line("A shared sector or a broken chain is damage the BAM cannot describe, "
+                     + "and guessing at it would lose a file rather than save one. Nothing "
+                     + "will be written while these files are on the disk.", dim: true)
             }
+        }
+    }
+
+    // MARK: The way past a blocker
+
+    /// Both claimants of a shared sector are named here, not one of them:
+    /// the sector belongs to a single file and nothing on the disk says
+    /// which, so keeping either would be the guess the repair refuses to make.
+    @ViewBuilder
+    private var blockingFiles: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            line("Scratch \(blockers.count) file\(blockers.count == 1 ? "" : "s"): "
+                 + blockers.prefix(6).map { "\"\($0)\"" }.joined(separator: ", ")
+                 + (blockers.count > 6 ? " and \(blockers.count - 6) more" : "") + ".")
+            line("The entries go; their blocks are left for the repair to work out afresh. "
+                 + "Nothing is written to the file until the image is saved, so this can "
+                 + "still be undone by leaving the image without saving.", dim: true)
         }
     }
 
@@ -731,6 +1028,7 @@ struct HelpSheet: View {
             ("⌘S", "Save the open image without leaving it"),
             ("⌘↑ ⌘↓", "Move an entry within an image directory"),
             ("", "Commodore menu: DEL entries, lock, unpack a DMS to ADF"),
+            ("", "Advanced, in the header, rename and DEL dialogs: PETSCII byte by byte"),
         ]),
         Section(title: "Music", rows: [
             ("Return", "Play a SID tune or a tracker module"),

@@ -406,10 +406,23 @@ final class PanelModel: ObservableObject {
     }
 
     /// One directory row the way a 1541 prints it: blocks, "name", type.
+    ///
+    /// The drive closes the quote on the first shifted space of the 16 byte
+    /// name field and prints the rest of the field after it as ordinary
+    /// characters, padding the whole thing out to the 18 columns that keep the
+    /// type in line. That is the trick a decorated directory is built on, so
+    /// the row is drawn the same way here.
     static func listingLine(for entry: ImageEntry) -> [UInt8] {
         var line = PETSCII.petscii(fromASCII: String(format: "%-4d ", entry.blocks))
-        line += [0x22] + entry.name + [0x22]
-        line += [UInt8](repeating: 0x20, count: max(0, 16 - entry.name.count))
+        var field = PETSCII.padded16(entry.name)
+        if let close = field.firstIndex(of: PETSCII.shiftedSpace) {
+            field[close] = 0x22
+        } else {
+            field.append(0x22)
+        }
+        var block = [0x22] + field
+        while block.count < 18 { block.append(0x20) }
+        line += block
         line += [0x20, entry.isSplat ? 0x2A : 0x20]
         line += PETSCII.petscii(fromASCII: entry.type.name.lowercased())
         line += [entry.isLocked ? 0x3C : 0x20]
@@ -417,8 +430,19 @@ final class PanelModel: ObservableObject {
     }
 
     /// The reverse-video header line of a directory listing.
+    ///
+    /// A Commodore drive prints the whole header field: the closing quote
+    /// covers the first of the two padding bytes, and everything from the
+    /// second one to the DOS type goes out exactly as it is stored. A
+    /// decorated header lives in those bytes, so they are drawn rather than
+    /// spelled out as spaces.
     static func headerLine(for image: DiskImage) -> [UInt8] {
         var line = PETSCII.petscii(fromASCII: "0 ")
+        if let cbm = image as? CBMDiskImage,
+           cbm.headerFieldBytes.count == CBMDiskImage.headerFieldLength {
+            let field = cbm.headerFieldBytes
+            return line + [0x22] + Array(field[0..<16]) + [0x22] + Array(field[17..<23])
+        }
         line += [0x22] + PETSCII.padded16(PETSCII.trimPadding(image.diskName)).map { $0 == 0xA0 ? 0x20 : $0 } + [0x22]
         if let id = image.diskID { line += [0x20] + id }
         return line

@@ -34,6 +34,10 @@ derived data, from Xcode and from the command line alike.
   panel leaves, and `Esc` throws the changes away.
 * Format a blank image, edit a disk header, lock entries, rearrange a
   directory, and insert `DEL` entries to draw rules and boxes in a listing.
+* An **Advanced** half to the header, rename and `DEL` entry dialogs: the
+  printed fields byte by byte in the character ROM's own glyphs, a grid of
+  every character no key reaches, the block count a row prints and the figure
+  the listing ends on — everything a decorated directory is made of.
 
 **Looking at files**
 
@@ -123,6 +127,7 @@ because the names are never converted to ASCII for display.
 | `⌘↑` `⌘↓` in a player | play the previous or next file |
 | `⌘←` `⌘→` in the SID player | step the song byte, restarting on that song |
 | `Ctrl-Shift` or `⇧⌘C` | switch the Commodore font between upper and lower case |
+| `⇧⌘R` | repair the open Commodore image |
 | `⇧⌘.` | show hidden files |
 | `⌘↑` `⌘↓` | move an entry within an image directory |
 | drag | move or copy — between the panels, or to and from the Finder |
@@ -245,7 +250,10 @@ to hide data from the DOS, and a half-written image shows up the same way.
 
 The key bar spans the full width, one segment per function key divided by
 hairlines, with the key and its label set at the same size. Status messages
-appear in the footer of the active panel.
+appear in the footer of the active panel, and go as soon as that panel walks
+somewhere else or the focus moves to the other column: the line reports what
+just happened *here*, and a message left standing over a different directory
+is describing a place that is no longer on screen.
 
 ## The viewer
 
@@ -686,6 +694,38 @@ Beyond plain file management: edit the disk header, insert a `DEL` entry to
 draw rules and boxes in a directory, lock and unlock entries, and move an entry
 up or down to rearrange the listing.
 
+### Advanced
+
+**Disk header**, **Rename** and **Add DEL entry** each ask for a name in a
+plain text field, in the system font, which is right for nearly everything and
+cannot say the half of PETSCII a decorated directory is written in. Each of the
+three carries an **Advanced** disclosure that opens onto the bytes themselves.
+
+The field is a row of cells drawn from the character ROM. Typing writes into
+the cell under the caret and steps on, the arrows move it, `⌫` blanks a cell
+back to a shifted space, and below sits a grid of every character no key
+reaches — the graphics, the reverse video forms, the shifted space itself —
+which the character set picker draws in either half of the ROM. *Every byte*
+widens the grid to all 256.
+
+A rename opens on the whole 16 byte name field, past the shifted space as well
+as before it. That matters because a drive closes the quote on the first
+shifted space and prints the rest of the field after it as ordinary characters,
+which is where a decorated row keeps its graphics — and the browser draws its
+listing rows the same way. Beside it is the block count the row prints, written
+as given and checked against nothing, which is what lets a directory count in
+pictures. **Add DEL entry** offers exactly the same, since a spacer row and a
+file's row are decorated alike.
+
+The header opens on the whole reverse-video line: 16 bytes of name, two of
+padding, the two ID bytes, one more pad and the DOS type. The first pad byte is
+where the drive puts the closing quote, so it never prints; everything after it
+does, and the panel draws the line from those bytes rather than spelling the
+gaps as spaces. **Blocks free** sets the figure the listing ends on by moving
+the per-track free counters and leaving the allocation map alone — the way a
+demo disk claims to be empty with the files still on it. `Repair Disk` counts
+the map, so it would put the figure back.
+
 ### Repair Disk
 
 The 1541's `VALIDATE`, with a report first. It walks every file's block chain —
@@ -711,6 +751,17 @@ What it will not do is guess. Two closed files claiming one sector, or a chain
 that walks off the disk, is damage the allocation map cannot describe: the
 report names the files and nothing is written. Seven of those 48 disks fall
 that way; the other 41 come out clean.
+
+It will, though, offer to get the damage out of the way. **Delete N Damaged
+Files** scratches exactly the entries standing in the repair's path — every
+claimant of a shared sector, and every file whose chain leaves the disk or
+turns back on itself — and surveys again, so the repair it unblocks is still
+read before it is agreed to. Both claimants of a shared sector go, not one of
+them: the sector belongs to a single file and nothing on the disk says which,
+so keeping either would be the guess the repair refuses to make. Only the
+directory entries are touched; their blocks are left where they are for the
+rebuild that follows to work out afresh. It is an edit like any other, so
+leaving the image without saving still undoes the lot.
 
 A `DEL` entry owns nothing — a scratched file's blocks go back to the disk and
 only the name is left — so directory art is read as the decoration it is and

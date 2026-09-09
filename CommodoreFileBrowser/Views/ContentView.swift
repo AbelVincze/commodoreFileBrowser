@@ -138,6 +138,11 @@ struct ContentView: View {
         }
     }
 
+    /// A rule of dashes: the spacer a directory is most often decorated with,
+    /// and the row the Advanced editor starts from when it is opened straight
+    /// away.
+    private let decorationDefault = "----------------"
+
     @ViewBuilder
     private func sheetView(_ sheet: AppSheet) -> some View {
         switch sheet {
@@ -150,10 +155,12 @@ struct ContentView: View {
                         onCancel: { model.sheet = nil },
                         onConfirm: { model.sheet = nil; model.performDelete(items) })
         case .rename(let item):
-            TextPromptSheet(title: "Rename", label: "New name", confirmTitle: "Rename",
-                            text: item.title, palette: palette,
-                            onCancel: { model.sheet = nil },
-                            onConfirm: { model.sheet = nil; model.performRename(item, to: $0) })
+            DirectoryEntrySheet(title: "Rename", label: "New name", confirmTitle: "Rename",
+                                palette: palette, text: item.title,
+                                advanced: model.entryDraft(for: item),
+                                font: $settings.font,
+                                onCancel: { model.sheet = nil },
+                                onConfirm: { model.sheet = nil; model.performRename(item, edit: $0) })
         case .makeFolder:
             TextPromptSheet(title: "New folder", label: "Name", confirmTitle: "Create",
                             text: "", palette: palette,
@@ -172,22 +179,27 @@ struct ContentView: View {
                             name: model.activePanel.image?.displayDiskName ?? "",
                             id: PETSCII.ascii(Array((model.activePanel.image?.diskID ?? []).prefix(2))),
                             wantsID: model.activePanel.image?.diskID != nil,
+                            advanced: model.headerDraft,
+                            font: $settings.font,
                             onCancel: { model.sheet = nil },
-                            onConfirm: { name, id in
+                            onConfirm: { edit in
                                 model.sheet = nil
-                                model.performEditHeader(name: name, id: id)
+                                model.performEditHeader(edit)
                             })
         case .repairDisk:
             if let plan = model.repairPlan {
                 RepairSheet(plan: plan, diskName: model.activePanel.headerTitle, palette: palette,
                             onCancel: { model.sheet = nil },
-                            onConfirm: { model.sheet = nil; model.performRepair() })
+                            onConfirm: { model.sheet = nil; model.performRepair() },
+                            onDeleteBlockers: { model.deleteRepairBlockers() })
             }
         case .addDecoration:
-            TextPromptSheet(title: "Add DEL entry", label: "Text", confirmTitle: "Add",
-                            text: "----------------", palette: palette,
-                            onCancel: { model.sheet = nil },
-                            onConfirm: { model.sheet = nil; model.addDecorativeEntry(named: $0) })
+            DirectoryEntrySheet(title: "Add DEL entry", label: "Text", confirmTitle: "Add",
+                                palette: palette, text: decorationDefault,
+                                advanced: model.newEntryDraft(named: decorationDefault),
+                                font: $settings.font,
+                                onCancel: { model.sheet = nil },
+                                onConfirm: { model.sheet = nil; model.addDecorativeEntry($0) })
         case .discardChanges:
             DiscardChangesSheet(imageName: model.activePanel.headerTitle,
                                 palette: palette,

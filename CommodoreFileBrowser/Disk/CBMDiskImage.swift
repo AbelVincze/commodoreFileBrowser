@@ -208,6 +208,30 @@ final class CBMDiskImage: DiskImage {
         return id + [0x20] + dos
     }
 
+    /// The bytes of the header sector a directory listing prints: 16 of name,
+    /// two of padding, two of ID, one more of padding and two of DOS type.
+    /// Every format lays them out in that order — only the start moves — so
+    /// one slice covers the lot, and a decorated directory can have all of it.
+    static let headerFieldLength = 23
+
+    var headerFieldBytes: [UInt8] {
+        let o = nameFieldOffset
+        guard o + Self.headerFieldLength <= bytes.count else { return [] }
+        return Array(bytes[o..<(o + Self.headerFieldLength)])
+    }
+
+    /// Write that field back byte for byte, with none of the tidying
+    /// `setDiskHeader` does. Anything short is padded out with shifted spaces.
+    func setHeaderFieldBytes(_ raw: [UInt8]) throws {
+        guard canWrite else { throw DiskImageError.readOnly }
+        let o = nameFieldOffset
+        guard o + Self.headerFieldLength <= bytes.count else { throw DiskImageError.unsupportedFormat }
+        for i in 0..<Self.headerFieldLength {
+            bytes[o + i] = i < raw.count ? raw[i] : PETSCII.shiftedSpace
+        }
+        hasUnsavedChanges = true
+    }
+
     func setDiskHeader(name: [UInt8], id: [UInt8]) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         let padded = PETSCII.padded16(PETSCII.trimPadding(name))
@@ -402,11 +426,45 @@ final class CBMDiskImage: DiskImage {
 
     var blocksFree: Int {
         var total = 0
-        for t in 1...trackCount where t != dirTrack {
-            if case .d71 = format, t == 53 { continue }
+        for t in countedTracks {
             if let b = bam(track: t) { total += Int(bytes[b.count]) }
         }
         return total
+    }
+
+    /// The tracks whose free counter adds up to `blocksFree`: everything the
+    /// BAM covers apart from the directory track, and apart from the second
+    /// BAM block a 1571 keeps on track 53.
+    private var countedTracks: [Int] {
+        (1...trackCount).filter { t in
+            if t == dirTrack { return false }
+            if case .d71 = format, t == 53 { return false }
+            return bam(track: t) != nil
+        }
+    }
+
+    /// The largest figure those counters can honestly add up to — a blank disk.
+    var maximumBlocksFree: Int { countedTracks.reduce(0) { $0 + sectorsPerTrack($1) } }
+
+    /// Make the directory report a given number of blocks free.
+    ///
+    /// Cosmetic: it moves the per-track free counters and leaves the
+    /// allocation bitmaps alone, which is how a demo directory claims a full
+    /// disk with the files still on it. The existing counts are nudged rather
+    /// than rebuilt, so a disk stays as close to its real shape as the figure
+    /// allows, and Repair Disk — which counts the bitmaps — would put it back.
+    func setBlocksFree(_ target: Int) throws {
+        guard canWrite else { throw DiskImageError.readOnly }
+        var delta = min(max(target, 0), maximumBlocksFree) - blocksFree
+        for t in countedTracks {
+            guard delta != 0, let b = bam(track: t) else { continue }
+            let held = Int(bytes[b.count])
+            let step = delta > 0 ? min(delta, max(0, sectorsPerTrack(t) - held))
+                                 : max(delta, -held)
+            bytes[b.count] = UInt8(held + step)
+            delta -= step
+        }
+        hasUnsavedChanges = true
     }
 
     /// Track scan order: outwards from the directory track, the way CBM DOS does it.
@@ -603,6 +661,32 @@ final class CBMDiskImage: DiskImage {
         try scanDirectory()
     }
 
+    /// The 16 name bytes exactly as the entry holds them, padding and all.
+    /// `ImageEntry.name` has the trailing padding taken off, and a decorated
+    /// entry is mostly padding, so an editor needs the field itself.
+    func rawName(of entry: ImageEntry) -> [UInt8] {
+        guard entry.entryOffset + 21 <= bytes.count else { return [] }
+        return Array(bytes[(entry.entryOffset + 5)..<(entry.entryOffset + 21)])
+    }
+
+    /// Rewrite the two things a directory row prints for an entry: the whole
+    /// 16 byte name field, past the shifted space that closes the quote as
+    /// well as before it, and the block count in front of it.
+    ///
+    /// Neither is checked against the disk. The block count is what the
+    /// listing says, not what the file occupies, which is the point — a
+    /// decorated directory spells its picture in both.
+    func setEntryFields(_ entry: ImageEntry, name: [UInt8], blocks: Int) throws {
+        guard canWrite else { throw DiskImageError.readOnly }
+        let padded = PETSCII.padded16(Array(name.prefix(16)))
+        for i in 0..<16 { bytes[entry.entryOffset + 5 + i] = padded[i] }
+        let count = min(max(blocks, 0), 0xFFFF)
+        bytes[entry.entryOffset + 30] = UInt8(count & 0xFF)
+        bytes[entry.entryOffset + 31] = UInt8((count >> 8) & 0xFF)
+        hasUnsavedChanges = true
+        try scanDirectory()
+    }
+
     func setLocked(_ entry: ImageEntry, locked: Bool) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         if locked { bytes[entry.entryOffset + 2] |= 0x40 } else { bytes[entry.entryOffset + 2] &= ~0x40 }
@@ -629,6 +713,12 @@ final class CBMDiskImage: DiskImage {
     }
 
     func addDecorativeEntry(name: [UInt8], after entry: ImageEntry?) throws {
+        try addDecorativeEntry(name: name, blocks: 0, after: entry)
+    }
+
+    /// The same, with the block count the row prints spelled out — a decorated
+    /// directory uses that column as much as it uses the name.
+    func addDecorativeEntry(name: [UInt8], blocks: Int, after entry: ImageEntry?) throws {
         guard canWrite else { throw DiskImageError.readOnly }
         let free = try allocateDirectorySlot()
         guard let freeIndex = slotOffsets.firstIndex(of: free) else { throw DiskImageError.directoryFull }
@@ -644,7 +734,8 @@ final class CBMDiskImage: DiskImage {
             }
         }
         writeEntry(at: slotOffsets[insertIndex], typeByte: 0x80 | CBMFileType.del.rawValue,
-                   name: PETSCII.trimPadding(Array(name.prefix(16))), track: 0, sector: 0, blocks: 0)
+                   name: Array(name.prefix(16)), track: 0, sector: 0,
+                   blocks: min(max(blocks, 0), 0xFFFF))
         hasUnsavedChanges = true
         try scanDirectory()
     }
@@ -898,6 +989,29 @@ struct DiskRepairPlan {
     /// guessing at it would lose a file rather than save one.
     var canRepair: Bool { collisions.isEmpty && brokenChains.isEmpty }
 
+    /// The files standing between this disk and a repair: the ones whose
+    /// chain leaves the disk or turns back on itself, and everyone mixed up
+    /// in a shared sector.
+    ///
+    /// Every claimant of a shared sector is named, not one of them. The
+    /// sector belongs to a single file and nothing on the disk says which, so
+    /// keeping either would be a guess — and a guess that leaves a live file
+    /// pointing into another's data is worse than losing both.
+    ///
+    /// The directory itself is never listed. It is claimed under one name so
+    /// its two routes are not read as two claimants, and it is not a file
+    /// anyone can scratch.
+    var blockingFiles: [String] {
+        var names: [String] = []
+        func add(_ name: String) {
+            guard name != CBMDiskImage.systemClaimant, !names.contains(name) else { return }
+            names.append(name)
+        }
+        for name in brokenChains { add(name) }
+        for clash in collisions { for name in clash.claimedBy { add(name) } }
+        return names
+    }
+
     var isClean: Bool {
         splatToScratch.isEmpty && wrongCounts.isEmpty && toFree == 0 && toAllocate == 0
             && badFreeCounts == 0 && collisions.isEmpty && brokenChains.isEmpty
@@ -908,6 +1022,34 @@ extension CBMDiskImage {
 
     /// What a repair would find and do. Writes nothing.
     func analyseForRepair() -> DiskRepairPlan { survey().plan }
+
+    /// The name a sector held by the disk itself is claimed under. Not a
+    /// file, and never offered up for deletion.
+    static let systemClaimant = "the directory"
+
+    /// Scratch the files a repair cannot see past, and say which went.
+    ///
+    /// Only the directory entry is touched. Freeing their blocks here would
+    /// be the wrong move twice over — a shared sector is still another file's,
+    /// and a chain that loops cannot be walked to its end — so the blocks are
+    /// left where they are for the repair that follows to work out afresh.
+    /// That is the whole point of doing this first: with the entries gone,
+    /// the survey has nothing left it cannot describe.
+    @discardableResult
+    func deleteBlockingFiles() throws -> [String] {
+        guard canWrite else { throw DiskImageError.readOnly }
+        let doomed = Set(survey().plan.blockingFiles)
+        guard !doomed.isEmpty else { return [] }
+
+        var scratched: [String] = []
+        for entry in entries where entry.type != .del && doomed.contains(entry.displayName) {
+            bytes[entry.entryOffset + 2] = 0
+            scratched.append(entry.displayName)
+        }
+        hasUnsavedChanges = true
+        try scanDirectory()
+        return scratched
+    }
 
     /// Put the disk right, and say what was done.
     ///
@@ -1020,7 +1162,7 @@ extension CBMDiskImage {
         // blocks of whichever format this is, and the directory. Claimed under
         // one name so the directory arriving by two routes below is not read
         // as two claimants.
-        let system = "the directory"
+        let system = Self.systemClaimant
         claim(dirTrack << 8, by: system)
         switch format {
         case .d71: claim(53 << 8, by: system)

@@ -96,6 +96,47 @@ for kind in CBMDiskImage.BlankFormat.allCases {
         let third = try CBMDiskImage(url: url)
         check(PETSCII.ascii(PETSCII.trimPadding(third.diskName)) == "new name", "\(kind.rawValue) header edit persists")
         check(third.entries.count == 3, "\(kind.rawValue) 3 entries persist")
+
+        // --- Byte level directory editing --------------------------------
+        // The whole printed header, graphics and all, and the figure the
+        // listing ends on: what a decorated directory is made of.
+        var raw = third.headerFieldBytes
+        check(raw.count == CBMDiskImage.headerFieldLength, "\(kind.rawValue) header field is 23 bytes")
+        raw[0] = 0xA0          // an early shifted space closes the quote
+        raw[1] = 0xB0          // and graphics follow it
+        raw[16] = 0xA6
+        raw[17] = 0xA7
+        raw[20] = 0xB1
+        try third.setHeaderFieldBytes(raw)
+
+        let decorated = PETSCII.padded16(PETSCII.petscii(fromASCII: "hi"))
+            .enumerated().map { $0.offset == 4 ? UInt8(0xB2) : $0.element }
+        try third.setEntryFields(third.entries[0], name: decorated, blocks: 1541)
+        try third.addDecorativeEntry(name: decorated, blocks: 999, after: third.entries[0])
+        try third.setBlocksFree(17)
+        check(third.blocksFree == 17, "\(kind.rawValue) blocks free forced to 17 (\(third.blocksFree))")
+        try third.setBlocksFree(third.maximumBlocksFree + 100)
+        check(third.blocksFree == third.maximumBlocksFree,
+              "\(kind.rawValue) and clamped to a blank disk (\(third.blocksFree))")
+        try third.setBlocksFree(17)
+        try third.save()
+
+        let fourth = try CBMDiskImage(url: url)
+        check(fourth.headerFieldBytes == raw, "\(kind.rawValue) the header field survives byte for byte")
+        check(fourth.rawName(of: fourth.entries[0]) == decorated,
+              "\(kind.rawValue) the name field survives past the quote")
+        check(fourth.entries[0].blocks == 1541, "\(kind.rawValue) a faked block count persists")
+        check(fourth.entries[1].type == .del && fourth.entries[1].blocks == 999,
+              "\(kind.rawValue) a DEL entry carries its own block count")
+        check(fourth.blocksFree == 17, "\(kind.rawValue) the forced free count persists")
+        // The line the panel draws must show what was written, quote and all.
+        let line = PanelModel.headerLine(for: fourth)
+        check(line.count == 2 + 18 + 6, "\(kind.rawValue) header line is the full printed field")
+        check(line[4] == 0xB0 && line[20] == 0xA7 && line[23] == 0xB1,
+              "\(kind.rawValue) header line draws the pad bytes as stored")
+        let row = PanelModel.listingLine(for: fourth.entries[0])
+        check(row[5] == 0x22 && row[8] == 0x22 && row[10] == 0xB2,
+              "\(kind.rawValue) the row closes its quote on the shifted space")
     } catch {
         print("  FAIL \(kind.rawValue): \(error)")
         failures += 1
@@ -2364,6 +2405,64 @@ do {
               "a chain leaving the disk cannot be repaired")
     }
 
+    // Deleting the way past a blocker: both claimants of a shared sector go,
+    // and the repair that was refused above then runs.
+    do {
+        let url = try blank("\(scratch)/repair6.d64", [("one", 600), ("keep", 400)])
+        let before = try CBMDiskImage(url: url)
+        let freeWithBoth = before.blocksFree
+        var raw = try Data(contentsOf: url)
+        putEntry(&raw, slot: 2, type: 0x82, name: "two",
+                 t: before.entries[0].startTrack, s: before.entries[0].startSector, blocks: 3)
+        try raw.write(to: url)
+
+        let img = try CBMDiskImage(url: url)
+        let plan = img.analyseForRepair()
+        check(!plan.canRepair, "a shared sector still blocks the repair")
+        check(plan.blockingFiles.sorted() == ["one", "two"],
+              "and both claimants are offered up: \(plan.blockingFiles)")
+
+        let gone = try img.deleteBlockingFiles()
+        check(gone.sorted() == ["one", "two"], "deleting takes both: \(gone)")
+        check(img.entries.map(\.displayName) == ["keep"], "the uninvolved file stays")
+
+        let after = img.analyseForRepair()
+        check(after.canRepair, "with them gone the repair is no longer blocked")
+        try img.applyRepair()
+        check(img.integrityNote == nil, "and it leaves the BAM agreeing with the directory")
+        check(img.blocksFree > freeWithBoth,
+              "the deleted file's blocks came back: \(img.blocksFree) free, was \(freeWithBoth)")
+        check(img.blocksFree == 664 - 2, "which is every block but \"keep\"'s: \(img.blocksFree)")
+    }
+
+    // The same for a chain that leaves the disk. One file to name, and the
+    // repair runs once it is gone.
+    do {
+        let url = try blank("\(scratch)/repair7.d64", [("one", 600), ("keep", 400)])
+        let before = try CBMDiskImage(url: url)
+        var raw = try Data(contentsOf: url)
+        raw[at(Int(before.entries[0].startTrack), Int(before.entries[0].startSector))] = 40
+        try raw.write(to: url)
+
+        let img = try CBMDiskImage(url: url)
+        check(img.analyseForRepair().blockingFiles == ["one"],
+              "a broken chain names its one file")
+        check(try img.deleteBlockingFiles() == ["one"], "which is the one deleted")
+        check(img.analyseForRepair().canRepair, "and the repair is unblocked")
+        try img.applyRepair()
+        check(img.blocksFree == 664 - 2, "with the runaway chain's blocks free again")
+    }
+
+    // A disk with nothing in the way is left alone: the button that calls this
+    // is never offered, and calling it anyway must not scratch a healthy file.
+    do {
+        let url = try blank("\(scratch)/repair8.d64", [("one", 600)])
+        let img = try CBMDiskImage(url: url)
+        check(img.analyseForRepair().blockingFiles.isEmpty, "a sound disk blocks nothing")
+        check(try img.deleteBlockingFiles().isEmpty, "so nothing is deleted")
+        check(img.entries.count == 1 && !img.hasUnsavedChanges, "and the disk is untouched")
+    }
+
     // The repo's own mismatching disk: hand made directory art, ten entries all
     // pointing at the same sector on the directory track.
     if let img = try? CBMDiskImage(url: URL(fileURLWithPath: "sample_images/o-tech-people.d64")) {
@@ -2533,6 +2632,57 @@ do {
     check(PanelDropDelegate.volumeIdentity(of: .image(imageURL)) != volumeA,
           "the inside of an image is a volume of its own")
     check(PanelDropDelegate.volumeIdentity(of: .volumes) == nil, "the volume list is nowhere")
+
+    // The status line belongs to where it was made. Checked here because this
+    // is the one place with a live AppModel and two panels to move between.
+    do {
+        model.statusMessage = "Saved something"
+        model.left.reload()
+        check(model.statusMessage == "Saved something", "a plain refresh keeps the status line")
+        model.left.navigate(to: .directory(dirB))
+        check(model.statusMessage.isEmpty, "walking to another directory clears it")
+
+        model.statusMessage = "Saved something"
+        model.activeSide = .right
+        check(model.statusMessage.isEmpty, "and so does switching column")
+
+        // The inactive panel counts too: it is redrawn under the same line.
+        model.statusMessage = "Saved something"
+        model.left.navigate(to: .directory(dirA))
+        check(model.statusMessage.isEmpty, "the other column moving clears it as well")
+
+        // The handful of actions that navigate and then report still do, since
+        // the message is set after the move rather than before it.
+        model.left.navigate(to: .directory(nested))
+        model.statusMessage = "Discarded the changes to DRAG"
+        check(model.statusMessage == "Discarded the changes to DRAG",
+              "a message set after a move survives it")
+
+        // Put the panels back where the drop tests below expect them.
+        model.left.navigate(to: .directory(dirA))
+        model.right.navigate(to: .directory(dirB))
+        model.activeSide = .left
+        model.statusMessage = ""
+    }
+
+    // ⌘R is the browser's own; every other Command chord belongs to the menu,
+    // where ⌥⌘R reveals in Finder and ⇧⌘R repairs the disk. The monitor sees
+    // the key first, so swallowing one of those would take the menu item away.
+    do {
+        func key(_ chars: String, _ flags: NSEvent.ModifierFlags, _ code: UInt16) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                             timestamp: 0, windowNumber: 0, context: nil,
+                             characters: chars, charactersIgnoringModifiers: chars,
+                             isARepeat: false, keyCode: code)!
+        }
+        check(model.handleKey(key("r", [.command], 15)), "⌘R is handled here, as rename")
+        model.sheet = nil
+        check(!model.handleKey(key("r", [.command, .shift], 15)),
+              "⇧⌘R falls through to the Repair Disk menu item")
+        check(!model.handleKey(key("r", [.command, .option], 15)),
+              "and ⌥⌘R to Show in Finder")
+        check(model.sheet == nil, "neither opened the rename sheet")
+    }
 
     let fileSource = DropSource(location: .directory(dirA), urls: [hello], hasFolder: false)
     let folderSource = DropSource(location: .directory(root), urls: [dirA], hasFolder: true)

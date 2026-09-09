@@ -29,13 +29,22 @@ enum SyncRunner {
         let work = rows.filter { $0.action != .skip }
         result.skipped = rows.count - work.count
         let ordered = work.sorted { rank($0.action) < rank($1.action) }
-        var done = 0
+        let total = ordered.reduce(Int64(0)) { $0 + $1.weight }
+        let bytesTotal = ordered.reduce(Int64(0)) { $0 + $1.bytesToCopy }
+        var done: Int64 = 0
+        var bytesDone: Int64 = 0
 
-        for row in ordered {
+        for (index, row) in ordered.enumerated() {
             if cancel.isCancelled { break }
-            progress?(SyncProgress(phase: .applying, done: Int64(done),
-                                   total: Int64(ordered.count), path: row.path))
-            done += 1
+            // Announced before the row is done rather than after, so the path
+            // on screen is the one being worked on. On slow media that name
+            // sitting there is the whole difference between "copying a big
+            // file" and "stopped".
+            progress?(SyncProgress(phase: .applying, done: done, total: total,
+                                   path: row.path, index: index, count: ordered.count,
+                                   bytesDone: bytesDone, bytesTotal: bytesTotal))
+            done += row.weight
+            bytesDone += row.bytesToCopy
             do {
                 try perform(row, leftRoot: leftRoot, rightRoot: rightRoot,
                             toTrash: toTrash, into: &result)
@@ -50,6 +59,10 @@ enum SyncRunner {
                 if let from = row.renamedFrom { result.baseline.removeValue(forKey: from) }
             }
         }
+
+        progress?(SyncProgress(phase: .applying, done: total, total: total,
+                               index: ordered.count, count: ordered.count,
+                               bytesDone: bytesDone, bytesTotal: bytesTotal))
 
         // Anything the user chose to leave alone is not agreed either.
         for row in rows where row.action == .skip {

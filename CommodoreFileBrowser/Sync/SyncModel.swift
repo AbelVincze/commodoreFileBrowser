@@ -251,6 +251,15 @@ struct SyncDifference: Identifiable, Equatable {
         default: return 0
         }
     }
+
+    /// What this row is worth to the progress bar.
+    ///
+    /// Bytes, plus a block for the file system work every row costs whether it
+    /// moves anything or not. Without that floor a run of nothing but renames
+    /// and deletions would have a total of zero and a bar that never moved,
+    /// and a thousand tiny files would look like no progress at all next to
+    /// one large one.
+    var weight: Int64 { bytesToCopy + 4096 }
 }
 
 /// Everything the sheet needs, and everything performing it needs.
@@ -310,13 +319,23 @@ final class SyncCancel {
     }
 }
 
-/// Where a scan has got to, for the sheet's progress bar.
+/// Where a scan or a run has got to, for the sheet's progress bar.
 struct SyncProgress {
     enum Phase { case walking, hashing, applying }
     var phase: Phase
+    /// Bytes, weighted — see `SyncDifference.weight`.
     var done: Int64 = 0
     var total: Int64 = 0
     var path: String = ""
+    /// Files finished and files to do, for the line under the bar. A count
+    /// moves even when the bytes are stuck inside one large file, which is
+    /// what tells the user the difference between slow and hung.
+    var index = 0
+    var count = 0
+    /// Real bytes, not the weighted ones the bar runs on. On a slow card this
+    /// is the figure that says whether it is worth waiting for.
+    var bytesDone: Int64 = 0
+    var bytesTotal: Int64 = 0
     var fraction: Double { total > 0 ? min(1, Double(done) / Double(total)) : 0 }
 }
 

@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CryptoKit
+import Combine
 setbuf(stdout, nil)
 
 let scratch = NSTemporaryDirectory()
@@ -2911,6 +2912,7 @@ do {
     check(model.syncPlan?.rows.count == 1, "finding the one file that differs")
     check(model.syncPlan?.rows.first?.path == "mine.txt", "and naming it")
     model.performSync(model.syncPlan?.rows ?? [], propagateDeletions: false)
+    settle { !model.isSyncing }
     check(fm.fileExists(atPath: liveRight.appendingPathComponent("mine.txt").path),
           "and applying it copies the file across")
 
@@ -2921,6 +2923,45 @@ do {
     check(model.syncPlan?.hasBaseline == true, "and the record written last time is found")
     model.sheet = nil
     SyncBaselineStore.applicationSupport().deleteRecord(left: liveLeft, right: liveRight)
+
+    // --- the run reports its progress, and does not block while it works
+    let bigLeft = root.appendingPathComponent("big-left")
+    let bigRight = root.appendingPathComponent("big-right")
+    try fm.createDirectory(at: bigRight, withIntermediateDirectories: true)
+    for i in 0..<40 { try put(String(repeating: "x", count: 5000), "f\(i).bin", in: bigLeft) }
+    model.left.navigate(to: .directory(bigLeft))
+    model.right.navigate(to: .directory(bigRight))
+    model.beginSyncFolders()
+    settle { !model.isSyncing && model.syncPlan != nil }
+    check(model.syncPlan?.rows.count == 40, "forty files to copy")
+
+    var seen: [SyncProgress] = []
+    let watcher = model.$syncProgress.sink { step in if let step { seen.append(step) } }
+    model.performSync(model.syncPlan?.rows ?? [], propagateDeletions: false)
+    check(model.isSyncing, "the run starts without blocking the caller")
+    check(model.sheet?.id == "sync", "and the sheet stays up to hold the bar")
+    settle(20) { !model.isSyncing }
+    watcher.cancel()
+
+    check(seen.contains { $0.phase == .applying }, "progress is reported while it runs")
+    check(seen.contains { $0.count == 40 }, "saying how many files there are to do")
+    let bars = seen.filter { $0.phase == .applying }.map(\.fraction)
+    check(bars.last == 1, "and the bar reaches the end — \(bars.last ?? -1)")
+    check(bars == bars.sorted(), "never going backwards")
+    let moved = seen.filter { $0.phase == .applying }.map(\.bytesDone)
+    check(moved.last == 40 * 5000, "and the byte count reaches what was there to copy — \(moved.last ?? -1)")
+    check(model.sheet == nil, "the sheet closes itself when the run is over")
+    check(model.statusMessage.hasPrefix("Synced 40"), "and the status line says what happened")
+    let landed = try fm.contentsOfDirectory(atPath: bigRight.path).count
+    check(landed == 40, "with all forty files across — \(landed)")
+    SyncBaselineStore.applicationSupport().deleteRecord(left: bigLeft, right: bigRight)
+
+    // A weightless run still moves the bar: renames and deletions copy nothing.
+    let weightless = SyncDifference(id: 0, path: "x", kind: .deletedOnRight,
+                                    action: .deleteLeft, allowed: [.deleteLeft])
+    check(weightless.weight > 0, "a row that moves no bytes still counts towards the bar")
+    check(weightless.bytesToCopy == 0, "though it has no bytes to copy")
+
 }
 
 // --- BAM repair -------------------------------------------------------------

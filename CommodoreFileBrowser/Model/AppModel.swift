@@ -952,7 +952,7 @@ final class AppModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let baseline = store.load(left: leftURL, right: rightURL)
             let known = baseline?.byPath ?? [:]
-            func report(_ progress: SyncProgress) {
+            let report = Self.throttled { progress in
                 DispatchQueue.main.async {
                     guard let self, self.syncRun == run else { return }
                     self.syncProgress = progress
@@ -990,41 +990,110 @@ final class AppModel: ObservableObject {
 
     func cancelSync() {
         syncCancel?.cancel()
+        // A run already writing files is left to finish the row it is on, save
+        // what it managed and report — so its completion is awaited rather than
+        // disowned. Files have moved; saying nothing about them would be the
+        // one thing worse than the freeze this replaced. A scan has nothing to
+        // report, so it is dropped where it stands.
+        guard syncProgress?.phase != .applying else { return }
         syncRun += 1
         isSyncing = false
         syncProgress = nil
     }
 
+    /// The sheet's Close, which is Stop while a run is under way.
+    func dismissSync() {
+        let running = syncProgress?.phase == .applying
+        cancelSync()
+        guard !running else { return }
+        sheet = nil
+        syncPlan = nil
+    }
+
     /// Carries out the rows the user settled on, and writes down what actually
     /// happened.
+    ///
+    /// On another thread, like the scan. Copying a few hundred files onto an SD
+    /// card takes long enough that doing it here would freeze the window and
+    /// then close the sheet out of nowhere, which is indistinguishable from a
+    /// hang until the moment it is over.
     func performSync(_ rows: [SyncDifference], propagateDeletions: Bool) {
-        guard let plan = syncPlan else { return }
+        guard let plan = syncPlan, !isSyncing else { return }
         settings.syncPropagatesDeletes = propagateDeletions
+        syncRun += 1
+        let run = syncRun
+        let cancel = SyncCancel()
+        syncCancel = cancel
+        isSyncing = true
+        syncProgress = SyncProgress(phase: .applying)
+
         let store = SyncBaselineStore.applicationSupport()
-        let baseline = store.load(left: plan.leftRoot, right: plan.rightRoot)?.byPath ?? [:]
-        // Always the Trash, whatever the preference for F8 says. That one
-        // governs files the user picked out one at a time; these are files the
-        // sync decided about, and a decision made from a stale record is
-        // exactly the one worth being able to take back.
-        let result = SyncRunner.apply(rows, leftRoot: plan.leftRoot, rightRoot: plan.rightRoot,
-                                      settled: plan.settled, carried: plan.carried,
-                                      baseline: baseline, toTrash: true,
-                                      cancel: SyncCancel())
-        var writeError: Error?
-        do {
-            try store.save(result.baseline, left: plan.leftRoot, right: plan.rightRoot,
-                           includesHidden: settings.showHiddenFiles)
-        } catch {
-            // The files are already where they belong; the only cost is that
-            // the next run has no record to work from, and a run with no record
-            // deletes nothing.
-            writeError = error
+        let leftRoot = plan.leftRoot, rightRoot = plan.rightRoot
+        let settled = plan.settled, carried = plan.carried
+        let hidden = settings.showHiddenFiles
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let baseline = store.load(left: leftRoot, right: rightRoot)?.byPath ?? [:]
+            // Always the Trash, whatever the preference for F8 says. That one
+            // governs files the user picked out one at a time; these are files
+            // the sync decided about, and a decision made from a stale record
+            // is exactly the one worth being able to take back.
+            let result = SyncRunner.apply(rows, leftRoot: leftRoot, rightRoot: rightRoot,
+                                          settled: settled, carried: carried,
+                                          baseline: baseline, toTrash: true,
+                                          cancel: cancel,
+                                          progress: Self.throttled { progress in
+                                              DispatchQueue.main.async {
+                                                  guard let self, self.syncRun == run else { return }
+                                                  self.syncProgress = progress
+                                              }
+                                          })
+            var writeError: Error?
+            do {
+                try store.save(result.baseline, left: leftRoot, right: rightRoot,
+                               includesHidden: hidden)
+            } catch {
+                // The files are already where they belong; the only cost is
+                // that the next run has no record to work from, and a run with
+                // no record deletes nothing.
+                writeError = error
+            }
+            DispatchQueue.main.async {
+                guard let self, self.syncRun == run else { return }
+                self.isSyncing = false
+                self.syncProgress = nil
+                self.syncPlan = nil
+                self.sheet = nil
+                self.finishOperation(verb: cancel.isCancelled ? "Stopped after syncing" : "Synced",
+                                     count: result.applied, skipped: result.skipped,
+                                     error: result.failures.first?.error ?? writeError)
+                if result.failures.count > 1 {
+                    self.statusMessage = "Synced \(result.applied) · "
+                        + "\(result.failures.count) could not be done"
+                }
+            }
         }
-        syncPlan = nil
-        finishOperation(verb: "Synced", count: result.applied, skipped: result.skipped,
-                        error: result.failures.first?.error ?? writeError)
-        if result.failures.count > 1 {
-            statusMessage = "Synced \(result.applied) · \(result.failures.count) could not be done"
+    }
+
+    /// Lets a progress callback through about thirty times a second.
+    ///
+    /// A run of ten thousand small files would otherwise post ten thousand
+    /// blocks to the main queue faster than it can draw them, and the window
+    /// spends its time redrawing a bar instead of moving one.
+    ///
+    /// A full bar always goes through. A short run finishes inside one tick of
+    /// this, and dropping its last call leaves the bar sitting where it started
+    /// until the sheet vanishes — which is the very thing the bar was added to
+    /// stop happening.
+    private static func throttled(_ publish: @escaping (SyncProgress) -> Void)
+    -> (SyncProgress) -> Void {
+        var last = Date.distantPast
+        return { progress in
+            let now = Date()
+            let complete = progress.total > 0 && progress.done >= progress.total
+            guard complete || now.timeIntervalSince(last) > 1.0 / 30 else { return }
+            last = now
+            publish(progress)
         }
     }
 

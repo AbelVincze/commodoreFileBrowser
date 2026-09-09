@@ -305,6 +305,19 @@ with no record of an earlier sync, the same content under two names carries no
 evidence about which name came first. Its note gives both names and where each
 one is, and it proposes nothing.
 
+Pressing **Sync** does not close the sheet: the run happens in front of you,
+with a bar, the file being worked on, and how far through it is —
+`214 of 617 files · 412 MB of 980 MB`. On an SD card a few hundred files take
+long enough that a frozen window and a dialog vanishing at the end would be
+indistinguishable from a hang. **Stop** ends it between files: everything
+copied so far stays, the record is written for what actually happened, and the
+status line says how far it got.
+
+The bar is weighted by bytes, so a large file moves it in proportion to what it
+costs, and every row counts for at least a block so a run of nothing but
+renames still moves it. The file count underneath keeps climbing while the bar
+is stuck inside one big file, which is what tells slow apart from stuck.
+
 Symbolic links are skipped rather than followed, and counted at the bottom.
 A `.app` and its kind are compared and copied whole rather than entered, so a
 change anywhere inside one re-copies all of it — which is what the Finder does

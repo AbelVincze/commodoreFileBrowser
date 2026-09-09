@@ -248,7 +248,8 @@ struct ContentView: View {
             // somewhere to put a progress bar and a Cancel.
             SyncSheet(plan: model.syncPlan,
                       progress: model.syncProgress,
-                      scanning: model.isSyncing,
+                      scanning: model.isSyncing && model.syncProgress?.phase != .applying,
+                      applying: model.syncProgress?.phase == .applying,
                       leftName: model.left.location.url?.path ?? "",
                       rightName: model.right.location.url?.path ?? "",
                       palette: palette,
@@ -257,10 +258,11 @@ struct ContentView: View {
                           set: { settings.syncPropagatesDeletes = $0
                                  model.startSyncScan(hashEverything: false) }),
                       onRescan: { model.startSyncScan(hashEverything: true) },
-                      onCancel: { model.cancelSync(); model.sheet = nil; model.syncPlan = nil },
+                      onCancel: { model.dismissSync() },
+                      // The sheet is not dismissed here: the run needs it to
+                      // stay up, and it closes itself when the run ends.
                       onApply: { model.performSync($0,
-                                                   propagateDeletions: settings.syncPropagatesDeletes)
-                                 model.sheet = nil })
+                                                   propagateDeletions: settings.syncPropagatesDeletes) })
         }
     }
 }

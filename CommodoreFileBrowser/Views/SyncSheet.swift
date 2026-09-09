@@ -12,6 +12,9 @@ struct SyncSheet: View {
     let plan: SyncPlan?
     let progress: SyncProgress?
     let scanning: Bool
+    /// True while the run is under way. The sheet stays up through it — there
+    /// has to be somewhere to put the bar, and somewhere to put Stop.
+    let applying: Bool
     let leftName: String
     let rightName: String
     let palette: Palette
@@ -49,7 +52,7 @@ struct SyncSheet: View {
             Text("Sync Folders")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
-            Button("Close", action: onCancel)
+            Button(applying ? "Stop" : "Close", action: onCancel)
                 .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 16)
@@ -74,7 +77,9 @@ struct SyncSheet: View {
 
     @ViewBuilder
     private var content: some View {
-        if scanning {
+        if applying {
+            applyingView
+        } else if scanning {
             scanningView
         } else if let plan {
             if rows.isEmpty {
@@ -110,6 +115,42 @@ struct SyncSheet: View {
                 .frame(width: 380)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// What the run looks like while it happens.
+    ///
+    /// The bar is weighted by bytes so a large file moves it in proportion to
+    /// what it costs, and the count of files underneath keeps moving while the
+    /// bar is stuck inside one — between them they answer the only question
+    /// being asked, which is whether anything is still happening.
+    private var applyingView: some View {
+        VStack(spacing: 10) {
+            ProgressView(value: progress?.fraction ?? 0).frame(width: 300)
+            Text(applyingCaption)
+                .font(.system(size: 11))
+                .foregroundStyle(palette.color(.dim))
+            Text(progress?.path ?? "")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(palette.color(.dim))
+                .lineLimit(1)
+                .truncationMode(.head)
+                .frame(width: 420)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var applyingCaption: String {
+        guard let progress, progress.count > 0 else { return "Starting…" }
+        var text = "\(progress.index) of \(progress.count) files"
+        // Only worth saying when bytes are what is being moved: a run of
+        // renames and deletions has none to speak of.
+        if progress.bytesTotal > 0 {
+            func size(_ n: Int64) -> String {
+                ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
+            }
+            text += " · \(size(progress.bytesDone)) of \(size(progress.bytesTotal))"
+        }
+        return text
     }
 
     private func nothingToDo(_ plan: SyncPlan) -> some View {
@@ -287,6 +328,7 @@ struct SyncSheet: View {
                 Toggle("Carry deletions across", isOn: $propagateDeletions)
                     .font(.system(size: 11))
                     .fixedSize()
+                    .disabled(applying)
                     .help("Off, a sync only ever adds and replaces, so nothing can "
                           + "be lost. On, a file deleted on one side since the last "
                           + "sync is deleted on the other — always to the Trash.")
@@ -296,7 +338,7 @@ struct SyncSheet: View {
                 Spacer()
                 Button("Compare again", action: onRescan)
                     .controlSize(.small)
-                    .disabled(scanning)
+                    .disabled(scanning || applying)
             }
             Text(summary)
                 .font(.system(size: 10))
@@ -311,12 +353,12 @@ struct SyncSheet: View {
                     Button("Skip every deletion") { skipDeletions() }
                 }
                 .frame(width: 90)
-                .disabled(rows.isEmpty)
+                .disabled(rows.isEmpty || applying)
                 Spacer()
-                Button("Cancel", action: onCancel)
+                Button(applying ? "Stop" : "Cancel", action: onCancel)
                 Button(applyTitle) { onApply(rows) }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(scanning || !rows.contains { $0.action != .skip })
+                    .disabled(scanning || applying || !rows.contains { $0.action != .skip })
             }
         }
         .padding(.horizontal, 16)

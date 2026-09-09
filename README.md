@@ -73,6 +73,19 @@ derived data, from Xcode and from the command line alike.
 * `⌘O` hands a file to whatever app macOS uses for it; a file inside an image
   is written out as a read-only copy first.
 
+## Before anything else
+
+The first time the browser is opened it says one thing and asks nothing: it
+writes to disk images, a mistake in it can damage a file nobody has another
+copy of, and **there is no warranty of any kind — you use it at your own risk.**
+Keep a backup of any floppy or hard disk image you would be sorry to lose
+before you edit it. A D64 is 170 KB and an ADF 880 KB; a spare copy costs
+nothing against a disk there is no second of.
+
+It appears once and then not again. *Show the backup notice at every start*, in
+Settings › Files, brings it back — off by default, and there is a checkbox on
+the notice itself for turning it on the moment you read it.
+
 ## How it works
 
 Two panels sit side by side. Each one shows either the list of mounted volumes

@@ -973,6 +973,88 @@ struct ViewerSheet: View {
 
 // MARK: - Help
 
+/// What the browser says for itself the first time it is opened.
+///
+/// Every other dialog here asks a question. This one does not: it is a notice,
+/// so it has one button and no way to refuse. The point of it is the middle
+/// paragraph — this program writes to disk images, and a disk image is often
+/// the only surviving copy of something. Saying so once, plainly, at the moment
+/// somebody is about to point it at their collection, is worth more than a line
+/// in a readme nobody opened.
+struct SplashSheet: View {
+    let palette: Palette
+    @Binding var atEveryStart: Bool
+    let onContinue: () -> Void
+
+    private var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String
+        let build = info?["CFBundleVersion"] as? String
+        switch (short, build) {
+        case let (s?, b?) where s != b: return "\(s) (\(b))"
+        case let (s?, _): return s
+        case let (_, b?): return b
+        default: return ""
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Commodore File Browser")
+                    .font(.system(size: 15, weight: .semibold))
+                if !version.isEmpty {
+                    Text("Version \(version)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(palette.color(.dim))
+                }
+            }
+
+            paragraph("This program writes to disk images. It has been tested, but it "
+                      + "is one person's work on formats that are forty years old, and a "
+                      + "mistake in it can damage a file nobody has another copy of.")
+            paragraph("**Keep a backup of anything you would be sorry to lose** before "
+                      + "you edit it — a floppy image or a hard disk image alike. A D64 "
+                      + "is 170 KB and an ADF 880 KB; a spare copy costs nothing against "
+                      + "a disk there is no second of.")
+            paragraph("Nothing is written to an image until you save it: edits are held "
+                      + "in memory, leaving a panel commits them, and Esc throws them "
+                      + "away. That is a safety net, not a guarantee.")
+            paragraph("The software comes with no warranty of any kind. You use it at "
+                      + "your own risk.")
+
+            Divider().overlay(palette.color(.border))
+
+            Toggle("Show this every time the app starts", isOn: $atEveryStart)
+                .font(.system(size: 11))
+            Text("Otherwise this is the only time you will see it. It can be turned "
+                 + "back on in Settings.")
+                .font(.system(size: 10))
+                .foregroundStyle(palette.color(.dim))
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Spacer()
+                Button("Continue", action: onContinue)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+        .background(palette.color(.window))
+    }
+
+    private func paragraph(_ text: String) -> some View {
+        // Markdown so one phrase can carry weight without a second Text and a
+        // guess at where the line will break.
+        Text(.init(text))
+            .font(.system(size: 11))
+            .foregroundStyle(palette.color(.text))
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct HelpSheet: View {
     let palette: Palette
     let onClose: () -> Void

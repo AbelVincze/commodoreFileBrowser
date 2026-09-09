@@ -41,6 +41,7 @@ struct ContentView: View {
         .background(WindowStyler(background: palette.color(.window), scheme: scheme))
         .preferredColorScheme(settings.appearance.colorScheme)
         .onAppear(perform: installKeyMonitor)
+        .onAppear(perform: model.showSplashIfNeeded)
         .onDisappear {
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil
@@ -236,6 +237,11 @@ struct ContentView: View {
                         onClose: { model.sheet = nil })
         case .help:
             HelpSheet(palette: palette, onClose: { model.sheet = nil })
+        case .splash:
+            SplashSheet(palette: palette,
+                        atEveryStart: Binding(get: { settings.splashAtEveryStart },
+                                              set: { settings.splashAtEveryStart = $0 }),
+                        onContinue: { model.dismissSplash() })
         case .syncFolders:
             // The one sheet that stays up while it works: the scan lands in it
             // long after it opened, and a comparison of two large trees needs

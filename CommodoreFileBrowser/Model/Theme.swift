@@ -202,6 +202,14 @@ final class SettingsStore: ObservableObject {
     @Published var showHiddenFiles: Bool { didSet { save() } }
     /// Deleting host files puts them in the Trash rather than erasing them.
     @Published var deleteToTrash: Bool { didSet { save() } }
+    /// Whether the notice about backing things up has been read once.
+    ///
+    /// Not a preference so much as a fact, but it lives here because this is
+    /// where the app remembers things between launches, and a second file to
+    /// hold one flag would be worse.
+    @Published var splashSeen: Bool { didSet { save() } }
+    /// Whether to show it every time rather than only the first.
+    @Published var splashAtEveryStart: Bool { didSet { save() } }
     /// Whether a sync carries a deletion from one side to the other.
     ///
     /// Off to begin with, and a habit rather than a per-run decision, so the
@@ -253,6 +261,8 @@ final class SettingsStore: ObservableObject {
         var font: PETSCIIFont?
         var showHiddenFiles: Bool
         var deleteToTrash: Bool?
+        var splashSeen: Bool?
+        var splashAtEveryStart: Bool?
         var syncPropagatesDeletes: Bool?
         var addHostExtension: Bool?
         var splitFraction: Double?
@@ -286,6 +296,8 @@ final class SettingsStore: ObservableObject {
         font = stored?.font ?? PETSCIIFont(rom: .c64, set: stored?.charSet ?? .uppercase)
         showHiddenFiles = stored?.showHiddenFiles ?? false
         deleteToTrash = stored?.deleteToTrash ?? true
+        splashSeen = stored?.splashSeen ?? false
+        splashAtEveryStart = stored?.splashAtEveryStart ?? false
         syncPropagatesDeletes = stored?.syncPropagatesDeletes ?? false
         addHostExtension = stored?.addHostExtension ?? true
         splitFraction = stored?.splitFraction ?? 0.5
@@ -312,6 +324,7 @@ final class SettingsStore: ObservableObject {
         let stored = Stored(appearance: appearance, light: light, dark: dark,
                             charSet: nil, font: font, showHiddenFiles: showHiddenFiles,
                             deleteToTrash: deleteToTrash,
+                            splashSeen: splashSeen, splashAtEveryStart: splashAtEveryStart,
                             syncPropagatesDeletes: syncPropagatesDeletes,
                             addHostExtension: addHostExtension,
                             splitFraction: splitFraction,

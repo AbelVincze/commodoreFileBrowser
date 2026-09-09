@@ -2436,6 +2436,49 @@ do {
 }
 
 
+// --- The notice at the start -------------------------------------------------
+print("\n=== the backup notice")
+do {
+    // A settings store reads the defaults domain this tool writes into, which
+    // the drag section clears at the end, so start from a known state.
+    UserDefaults.standard.removeObject(forKey: "theme.v1")
+
+    let first = SettingsStore()
+    check(!first.splashSeen, "on a fresh install the notice has not been read")
+    check(!first.splashAtEveryStart, "and showing it every time is off to begin with")
+
+    let model = AppModel(settings: first)
+    model.showSplashIfNeeded()
+    check(model.sheet?.id == "splash", "so the first start shows it")
+    model.showSplashIfNeeded()
+    check(model.sheet?.id == "splash", "and asking twice in one launch shows one, not two")
+    model.dismissSplash()
+    check(model.sheet == nil, "continuing puts it away")
+    check(first.splashSeen, "and remembers that it was read")
+
+    // A second launch: same stored settings, a new object to read them.
+    let second = SettingsStore()
+    check(second.splashSeen, "which survives into the next launch")
+    let later = AppModel(settings: second)
+    later.showSplashIfNeeded()
+    check(later.sheet == nil, "so it does not come back")
+
+    second.splashAtEveryStart = true
+    let asked = AppModel(settings: SettingsStore())
+    asked.showSplashIfNeeded()
+    check(asked.sheet?.id == "splash", "unless it has been asked for at every start")
+    asked.dismissSplash()
+
+    // Something already on screen is not elbowed aside by it.
+    let busy = AppModel(settings: SettingsStore())
+    busy.sheet = .help
+    busy.showSplashIfNeeded()
+    check(busy.sheet?.id == "help", "and it never takes the place of a dialog already up")
+    busy.sheet = nil
+
+    UserDefaults.standard.removeObject(forKey: "theme.v1")
+}
+
 // --- Folder sync -------------------------------------------------------------
 print("\n=== folder sync")
 do {

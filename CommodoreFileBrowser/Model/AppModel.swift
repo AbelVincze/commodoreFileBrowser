@@ -64,6 +64,7 @@ enum AppSheet: Identifiable {
     case discardChanges
     case help
     case syncFolders
+    case splash
 
     var id: String {
         switch self {
@@ -84,6 +85,7 @@ enum AppSheet: Identifiable {
         // Constant, so the sheet's own editing state survives a fresh scan
         // landing in it. `SyncPlan.id` is what says the rows have changed.
         case .syncFolders: return "sync"
+        case .splash: return "splash"
         }
     }
 }
@@ -871,6 +873,28 @@ final class AppModel: ObservableObject {
             case .noDestination: return "The other panel is not a folder or an image."
             }
         }
+    }
+
+    // MARK: - The notice at the start
+
+    /// Guards against a second `onAppear`, which SwiftUI is entitled to send.
+    private var splashOffered = false
+
+    /// Shows the backup notice, the first time and after that only if asked.
+    ///
+    /// Reading it is what marks it read, so a first launch that was quit from
+    /// the Dock without the window ever coming up still gets it next time.
+    func showSplashIfNeeded() {
+        guard !splashOffered else { return }
+        splashOffered = true
+        guard !settings.splashSeen || settings.splashAtEveryStart else { return }
+        guard sheet == nil else { return }
+        sheet = .splash
+    }
+
+    func dismissSplash() {
+        settings.splashSeen = true
+        sheet = nil
     }
 
     // MARK: - Sync

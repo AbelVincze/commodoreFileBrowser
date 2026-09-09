@@ -110,9 +110,15 @@ private struct FileSettings: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            Toggle("Show the backup notice at every start", isOn: $settings.splashAtEveryStart)
+            Text("The notice about keeping a copy of anything precious before editing it. Shown once on the first run; turn this on to see it every time.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
         .padding(20)
-        .frame(height: 200)
+        .frame(height: 260)
     }
 }

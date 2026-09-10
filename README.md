@@ -16,6 +16,11 @@ The app lands in `build/Products/Release/`. `SYMROOT` and `OBJROOT` are set in
 the project, so builds go to the project's own `build/` folder rather than to
 derived data, from Xcode and from the command line alike.
 
+A Release build is stripped and dead-code stripped as it is linked, which is
+most of the binary: the symbol table alone was more than half of it. The names
+are not lost, they move to the `.dSYM` beside the app, which is what a crash
+report is symbolicated against. A Debug build keeps everything.
+
 ## What it does
 
 **Browsing and editing images**
